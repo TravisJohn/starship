@@ -1,7 +1,9 @@
 import { app, BrowserWindow } from "electron";
 import path from "node:path";
+import { PtyManager } from "./pty/ptyManager";
 
 let mainWindow: BrowserWindow | null = null;
+const ptyManager = new PtyManager();
 
 const createMainWindow = (): void => {
   mainWindow = new BrowserWindow({
@@ -28,6 +30,7 @@ const createMainWindow = (): void => {
 };
 
 app.whenReady().then(() => {
+  ptyManager.registerIpcHandlers();
   createMainWindow();
 
   app.on("activate", () => {
@@ -41,4 +44,8 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
   }
+});
+
+app.on("before-quit", () => {
+  ptyManager.killAll();
 });

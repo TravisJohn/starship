@@ -48,3 +48,33 @@ Phase 1 scope: Electron shell, manual Project Shelf, embedded xterm.js terminal 
 - Ruled out renderer Node access: the renderer receives a narrow preload API only; Electron `nodeIntegration` remains disabled.
 - Ruled out hidden prompt injection: no code writes to a PTY or starts Claude in T2.
 - Ruled out `~/.claude/projects` writes and Phase 2+ scope creep.
+
+## T3. PTY bridge - node-pty main to xterm renderer
+
+### Actions and reasoning
+- Installed `node-pty`, `xterm`, `xterm-addon-fit`, and `@electron/rebuild` as required by T3.
+- npm warned that `xterm` and `xterm-addon-fit` are deprecated in favor of `@xterm/*` packages. I kept the plan-specified packages for Phase 1 rather than substituting package names mid-phase.
+- Forced `electron-rebuild -f -w node-pty`; it failed because Visual Studio Build Tools are present but the Spectre-mitigated VC libraries required by `node-pty` are missing. Verified the `node-pty` Windows prebuild loads under Electron's embedded Node with `ELECTRON_RUN_AS_NODE=1`, so the app can still exercise ConPTY on this machine. The postinstall hook now attempts `electron-rebuild -w node-pty` and falls back to a prebuild load verification script if rebuild fails.
+- Added `src/main/pty/ptyManager.ts`. The main process owns PTY sessions keyed by renderer-supplied session id, sends `pty:data`/`pty:exit` back only to the WebContents that spawned the session, and kills all sessions on app quit.
+- Added `src/renderer/components/Terminal.tsx`, using xterm.js with the fit addon, direct keyboard/data forwarding, and debounced `ResizeObserver` resize propagation.
+- Temporarily routed `App.tsx` to a full-pane PowerShell diagnostic terminal so T3 can verify the bridge before the Project Shelf exists.
+- Added a dev-only Playwright Core verification script that drives the built Electron app, types PowerShell commands through xterm, resizes the window, and checks rendered terminal text for before/after markers.
+- The first verifier run showed the built renderer was blank because Vite emitted absolute `/assets/...` URLs for `file://` loading. Set `base: "./"` in `vite.config.ts`; this is needed for packaged Electron loading and is still within T1/T3 shell scope.
+- The second verifier run reached the first PowerShell marker, proving keyboard input traversed xterm to ConPTY. The run then failed in the harness because Playwright exposes BrowserWindow as an evaluate handle; updated the resize step accordingly.
+- The final `npm run verify:terminal:powershell` pass succeeded: a built Electron app launched, PowerShell spawned in the embedded terminal, a marker command appeared before resize, the window resized, and a second marker appeared after resize.
+- Ran `npm run postinstall`; it reproduced the Spectre-library rebuild failure and then exited successfully through the Electron prebuild verification fallback.
+
+### Decisions not explicit in the plan
+- The T3 diagnostic terminal passes an empty `cwd`; the main process interprets that as its own current working directory. This avoids hardcoding this repo's path into renderer code while still letting T5 pass an explicit project path.
+- Resize propagation is debounced at 90 ms. This is long enough to coalesce rapid ResizeObserver events during window drags but short enough that interactive resizing still feels immediate.
+- React StrictMode was removed from the renderer entry. Its dev-only double mount would spawn and kill two PTYs for one visible terminal, which would pollute the ConPTY go/no-go signal.
+- The postinstall rebuild fallback is deliberately narrow: it only accepts failure if `node-pty` can load under Electron. This keeps a missing toolchain from blocking the current machine while still failing installs where no compatible prebuild exists.
+- Playwright Core was added as a dev dependency only for Phase 1 verification. It does not add a product surface or any Phase 2 behavior.
+
+### Deviations
+- `electron-rebuild` cannot complete on this machine until the Spectre-mitigated VC libraries are installed. The current workaround relies on `node-pty`'s Electron-compatible prebuild and is logged as a packaging risk for the go/no-go writeup.
+
+### CLAUDE.md / PRD risk review
+- Hit the native rebuild risk directly. It is not blocking runtime on this machine because the prebuild loads under Electron, but it remains a first-run/packaging risk.
+- Resize/reflow risk is addressed with a debounced ResizeObserver and by sending `pty:resize` only after a PTY has spawned and the terminal size has actually changed.
+- Ruled out `~/.claude/projects` writes and Phase 2+ scope creep.

@@ -12,3 +12,15 @@
 body {
   margin: 0;
 }
+
+#root {
+  min-height: 100vh;
+}
+
+.xterm {
+  height: 100%;
+}
+
+.xterm .xterm-viewport {
+  overflow-y: auto;
+}

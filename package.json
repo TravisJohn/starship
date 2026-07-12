@@ -12,15 +12,21 @@
     "build:renderer": "tsc -b tsconfig.shared.json tsconfig.renderer.json && vite build",
     "build": "npm run build:main && npm run build:renderer",
     "test": "vitest run",
-    "dist": "npm run build && electron-builder"
+    "verify:terminal:powershell": "npm run build && node scripts/verify-terminal-powershell.cjs",
+    "dist": "npm run build && electron-builder",
+    "postinstall": "electron-rebuild -w node-pty || node scripts/verify-node-pty-prebuild.cjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
     "electron": "latest",
+    "node-pty": "^1.1.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "xterm": "^5.3.0",
+    "xterm-addon-fit": "^0.8.0"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.2.0",
     "@types/node": "latest",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
@@ -28,6 +34,7 @@
     "concurrently": "latest",
     "cross-env": "latest",
     "electron-builder": "latest",
+    "playwright-core": "^1.61.1",
     "postcss": "latest",
     "tailwindcss": "^3.4.17",
     "typescript": "latest",
