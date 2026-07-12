@@ -26,7 +26,6 @@ const createMainWindow = (): void => {
   const devServerUrl = process.env.VITE_DEV_SERVER_URL;
   if (devServerUrl) {
     void mainWindow.loadURL(devServerUrl);
-    mainWindow.webContents.openDevTools({ mode: "detach" });
   } else {
     void mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
   }
