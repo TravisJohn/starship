@@ -74,6 +74,18 @@ export type InceptionDraftDocumentsResponse = {
   errors: string[];
 };
 
+export type InceptionCreateProjectRequest = {
+  interview: InceptionInterview;
+  prd: string;
+  claude: string;
+};
+
+export type InceptionCreateProjectResponse = {
+  project: Project;
+  intentLedger: IntentLedger;
+  coldPrompt: string;
+};
+
 export type IntentLedgerRequest = {
   projectId: ProjectId;
 };
@@ -170,6 +182,14 @@ export type RendererToMainInvokeMap = {
     request: InceptionDraftDocumentsRequest;
     response: InceptionDraftDocumentsResponse;
   };
+  "inception:chooseParentDirectory": {
+    request: void;
+    response: string | null;
+  };
+  "inception:createProject": {
+    request: InceptionCreateProjectRequest;
+    response: InceptionCreateProjectResponse;
+  };
 };
 
 export type MainToRendererEventMap = {
@@ -213,5 +233,9 @@ export type StarshipApi = {
     draftDocuments: (
       request: InceptionDraftDocumentsRequest
     ) => Promise<InceptionDraftDocumentsResponse>;
+    chooseParentDirectory: () => Promise<string | null>;
+    createProject: (
+      request: InceptionCreateProjectRequest
+    ) => Promise<InceptionCreateProjectResponse>;
   };
 };

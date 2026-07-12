@@ -43,7 +43,11 @@ const api: StarshipApi = {
     renderTemplates: (request) =>
       ipcRenderer.invoke("inception:renderTemplates", request),
     draftDocuments: (request) =>
-      ipcRenderer.invoke("inception:draftDocuments", request)
+      ipcRenderer.invoke("inception:draftDocuments", request),
+    chooseParentDirectory: () =>
+      ipcRenderer.invoke("inception:chooseParentDirectory"),
+    createProject: (request) =>
+      ipcRenderer.invoke("inception:createProject", request)
   }
 };
 

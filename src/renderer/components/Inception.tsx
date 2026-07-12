@@ -1,9 +1,14 @@
 import { useMemo, useState } from "react";
-import type { InceptionInterview, IntentInterview, RequirementsInterview } from "../../shared/ipc";
+import type {
+  InceptionInterview,
+  IntentInterview,
+  RequirementsInterview
+} from "../../shared/ipc";
 
 type InceptionProps = {
   onCancel: () => void;
   onComplete: (interview: InceptionInterview) => void;
+  onChooseParentDirectory: () => Promise<string | null>;
 };
 
 const emptyIntent: IntentInterview = {
@@ -27,7 +32,8 @@ const emptyRequirements: RequirementsInterview = {
 
 export const Inception = ({
   onCancel,
-  onComplete
+  onComplete,
+  onChooseParentDirectory
 }: InceptionProps): JSX.Element => {
   const [step, setStep] = useState<"intent" | "requirements">("intent");
   const [intent, setIntent] = useState<IntentInterview>(emptyIntent);
@@ -96,6 +102,7 @@ export const Inception = ({
           <RequirementsStep
             requirements={requirements}
             onChange={setRequirements}
+            onChooseParentDirectory={onChooseParentDirectory}
             onBack={() => setStep("intent")}
             onComplete={completeInterview}
             canComplete={requirementsComplete}
@@ -194,6 +201,7 @@ const IntentStep = ({
 type RequirementsStepProps = {
   requirements: RequirementsInterview;
   onChange: (requirements: RequirementsInterview) => void;
+  onChooseParentDirectory: () => Promise<string | null>;
   onBack: () => void;
   onComplete: () => void;
   canComplete: boolean;
@@ -202,6 +210,7 @@ type RequirementsStepProps = {
 const RequirementsStep = ({
   requirements,
   onChange,
+  onChooseParentDirectory,
   onBack,
   onComplete,
   canComplete
@@ -211,6 +220,13 @@ const RequirementsStep = ({
     value: string
   ): void => {
     onChange({ ...requirements, [field]: value });
+  };
+
+  const chooseParentDirectory = async (): Promise<void> => {
+    const parentDirectory = await onChooseParentDirectory();
+    if (parentDirectory) {
+      setField("parentDirectory", parentDirectory);
+    }
   };
 
   return (
@@ -242,11 +258,20 @@ const RequirementsStep = ({
           value={requirements.projectName}
           onChange={(value) => setField("projectName", value)}
         />
-        <TextInput
-          label="Where should the project folder be created?"
-          value={requirements.parentDirectory}
-          onChange={(value) => setField("parentDirectory", value)}
-        />
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2">
+          <TextInput
+            label="Where should the project folder be created?"
+            value={requirements.parentDirectory}
+            onChange={(value) => setField("parentDirectory", value)}
+          />
+          <button
+            type="button"
+            onClick={() => void chooseParentDirectory()}
+            className="h-10 rounded-md border border-zinc-700 px-3 text-sm font-medium text-zinc-100 hover:border-emerald-400 hover:text-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+          >
+            Choose
+          </button>
+        </div>
         <TextArea
           label="What is the one-line offer or premise?"
           value={requirements.oneLiner}
