@@ -34,6 +34,10 @@ const api: StarshipApi = {
     addProject: () => ipcRenderer.invoke("shelf:addProject"),
     listProjects: () => ipcRenderer.invoke("shelf:listProjects"),
     launch: (request) => ipcRenderer.invoke("shelf:launch", request)
+  },
+  intent: {
+    getLedger: (request) => ipcRenderer.invoke("intent:getLedger", request),
+    saveLedger: (request) => ipcRenderer.invoke("intent:saveLedger", request)
   }
 };
 

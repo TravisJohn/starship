@@ -8,6 +8,28 @@ export type Project = {
   createdAt: string;
 };
 
+export type IntentLedger = {
+  projectId: ProjectId;
+  purpose: string;
+  successCriteria: string;
+  acceptedTradeoffs: string;
+  neverDo: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type IntentLedgerInput = {
+  projectId: ProjectId;
+  purpose: string;
+  successCriteria: string;
+  acceptedTradeoffs: string;
+  neverDo: string;
+};
+
+export type IntentLedgerRequest = {
+  projectId: ProjectId;
+};
+
 export type PtySpawnRequest = {
   sessionId: PtySessionId;
   command: string;
@@ -84,6 +106,14 @@ export type RendererToMainInvokeMap = {
     request: ShelfLaunchRequest;
     response: ShelfLaunchResponse;
   };
+  "intent:getLedger": {
+    request: IntentLedgerRequest;
+    response: IntentLedger | null;
+  };
+  "intent:saveLedger": {
+    request: IntentLedgerInput;
+    response: IntentLedger;
+  };
 };
 
 export type MainToRendererEventMap = {
@@ -115,5 +145,9 @@ export type StarshipApi = {
     addProject: () => Promise<Project | null>;
     listProjects: () => Promise<Project[]>;
     launch: (request: ShelfLaunchRequest) => Promise<ShelfLaunchResponse>;
+  };
+  intent: {
+    getLedger: (request: IntentLedgerRequest) => Promise<IntentLedger | null>;
+    saveLedger: (request: IntentLedgerInput) => Promise<IntentLedger>;
   };
 };
