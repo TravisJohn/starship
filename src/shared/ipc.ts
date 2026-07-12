@@ -50,6 +50,17 @@ export type InceptionInterview = {
   requirements: RequirementsInterview;
 };
 
+export type InceptionTemplateRenderRequest = {
+  interview: InceptionInterview;
+};
+
+export type InceptionTemplateRenderResponse = {
+  templateDir: string;
+  prd: string;
+  claude: string;
+  missingPlaceholders: string[];
+};
+
 export type IntentLedgerRequest = {
   projectId: ProjectId;
 };
@@ -138,6 +149,10 @@ export type RendererToMainInvokeMap = {
     request: IntentLedgerInput;
     response: IntentLedger;
   };
+  "inception:renderTemplates": {
+    request: InceptionTemplateRenderRequest;
+    response: InceptionTemplateRenderResponse;
+  };
 };
 
 export type MainToRendererEventMap = {
@@ -173,5 +188,10 @@ export type StarshipApi = {
   intent: {
     getLedger: (request: IntentLedgerRequest) => Promise<IntentLedger | null>;
     saveLedger: (request: IntentLedgerInput) => Promise<IntentLedger>;
+  };
+  inception: {
+    renderTemplates: (
+      request: InceptionTemplateRenderRequest
+    ) => Promise<InceptionTemplateRenderResponse>;
   };
 };

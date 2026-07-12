@@ -38,6 +38,10 @@ const api: StarshipApi = {
   intent: {
     getLedger: (request) => ipcRenderer.invoke("intent:getLedger", request),
     saveLedger: (request) => ipcRenderer.invoke("intent:saveLedger", request)
+  },
+  inception: {
+    renderTemplates: (request) =>
+      ipcRenderer.invoke("inception:renderTemplates", request)
   }
 };
 
