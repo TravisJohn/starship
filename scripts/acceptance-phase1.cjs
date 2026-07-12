@@ -181,7 +181,7 @@ const createTempProject = () => {
 };
 
 (async () => {
-  const { projectPath, dbPath } = createTempProject();
+  const { tempRoot, projectPath, dbPath } = createTempProject();
   log(`Temporary acceptance project: ${projectPath}`);
   log(`Acceptance prompt shown before firing: ${taskPrompt}`);
 
@@ -197,7 +197,7 @@ const createTempProject = () => {
 
   try {
     const page = await app.firstWindow();
-    await page.getByRole("button", { name: "Add Project" }).waitFor({
+    await page.getByRole("button", { name: "Locate Root" }).waitFor({
       timeout: 10000
     });
     await app.evaluate(
@@ -207,14 +207,19 @@ const createTempProject = () => {
           filePaths: [selectedPath]
         });
       },
-      projectPath
+      tempRoot
     );
 
-    await page.getByRole("button", { name: "Add Project" }).click();
+    await page.getByRole("button", { name: "Locate Root" }).click();
     await page
-      .getByRole("heading", { name: "Acceptance Project With Spaces" })
+      .locator("tbody tr")
+      .filter({ hasText: "Acceptance Project With Spaces" })
       .waitFor({ timeout: 10000 });
-    await page.getByRole("button", { name: "Launch" }).click();
+    await page
+      .locator("tbody tr")
+      .filter({ hasText: "Acceptance Project With Spaces" })
+      .getByRole("button", { name: "Launch" })
+      .click();
     await page.locator(".xterm").waitFor({ timeout: 10000 });
 
     await waitForTerminalText(page, "Yes, I trust this folder", 45000);

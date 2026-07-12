@@ -17,8 +17,11 @@ const launchApp = (dbPath) =>
     }
   });
 
+const projectRow = (page) =>
+  page.locator("tbody tr").filter({ hasText: "Project With Spaces" });
+
 (async () => {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "starship-shelf-"));
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "starship-dashboard-"));
   const projectPath = path.join(tempRoot, "Project With Spaces");
   const dbPath = path.join(tempRoot, "starship.sqlite");
   fs.mkdirSync(projectPath);
@@ -27,7 +30,7 @@ const launchApp = (dbPath) =>
 
   try {
     const page = await app.firstWindow();
-    await page.getByRole("button", { name: "Add Project" }).waitFor({
+    await page.getByRole("button", { name: "Locate Root" }).waitFor({
       timeout: 10000
     });
     await app.evaluate(
@@ -37,13 +40,11 @@ const launchApp = (dbPath) =>
           filePaths: [selectedPath]
         });
       },
-      projectPath
+      tempRoot
     );
 
-    await page.getByRole("button", { name: "Add Project" }).click();
-    await page
-      .getByRole("heading", { name: "Project With Spaces" })
-      .waitFor({ timeout: 10000 });
+    await page.getByRole("button", { name: "Locate Root" }).click();
+    await projectRow(page).waitFor({ timeout: 10000 });
   } finally {
     await app.close();
   }
@@ -52,11 +53,9 @@ const launchApp = (dbPath) =>
 
   try {
     const page = await app.firstWindow();
-    await page
-      .getByRole("heading", { name: "Project With Spaces" })
-      .waitFor({ timeout: 10000 });
+    await projectRow(page).waitFor({ timeout: 10000 });
     await page.getByText(projectPath).waitFor({ timeout: 10000 });
-    console.log("Project shelf persistence verified across restart.");
+    console.log("Mission dashboard root discovery verified across restart.");
   } finally {
     await app.close();
   }

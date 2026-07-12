@@ -151,7 +151,7 @@ const createTempWorkspace = () => {
 
   try {
     const page = await app.firstWindow();
-    await page.getByRole("button", { name: "New Project" }).waitFor({ timeout: 10000 });
+    await page.getByRole("button", { name: "Locate Root" }).waitFor({ timeout: 10000 });
 
     // Stub the folder picker (same pattern as acceptance-phase1/2). Also
     // make a best-effort attempt to record OS Notification calls - this is
@@ -175,14 +175,21 @@ const createTempWorkspace = () => {
       } catch {
         // Best-effort only; see comment above.
       }
-    }, projectPath);
+    }, tempRoot);
 
-    log("Adding the temp project to the Shelf.");
-    await page.getByRole("button", { name: "Add Folder" }).click();
-    await page.getByRole("heading", { name: "Phase Three Project" }).waitFor({ timeout: 10000 });
+    log("Locating the temp root in the Mission Dashboard.");
+    await page.getByRole("button", { name: "Locate Root" }).click();
+    await page
+      .locator("tbody tr")
+      .filter({ hasText: "Phase Three Project" })
+      .waitFor({ timeout: 10000 });
 
     log("Launching Claude in the embedded terminal.");
-    await page.getByRole("button", { name: "Launch" }).click();
+    await page
+      .locator("tbody tr")
+      .filter({ hasText: "Phase Three Project" })
+      .getByRole("button", { name: "Launch" })
+      .click();
     await page.locator(".xterm").waitFor({ timeout: 10000 });
 
     const firstTerminalText = await waitForTerminalText(page, "trust this folder", 60000).catch(

@@ -1,6 +1,7 @@
 import { app, BrowserWindow } from "electron";
 import path from "node:path";
-import { createStarshipDb, registerShelfHandlers, type StarshipDb } from "./db";
+import { registerDashboardHandlers } from "./dashboard";
+import { createStarshipDb, registerIntentHandlers, type StarshipDb } from "./db";
 import { registerInceptionHandlers } from "./inception";
 import { ObservationManager } from "./observation/observationManager";
 import { PtyManager } from "./pty/ptyManager";
@@ -64,7 +65,8 @@ const createMainWindow = (): void => {
 
 app.whenReady().then(() => {
   db = createStarshipDb();
-  registerShelfHandlers(db);
+  registerDashboardHandlers(db);
+  registerIntentHandlers(db);
   registerInceptionHandlers(db);
   ptyManager.registerIpcHandlers();
   createMainWindow();

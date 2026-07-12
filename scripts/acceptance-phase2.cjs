@@ -90,7 +90,7 @@ const assertIncludes = (text, expected, label) => {
 
   try {
     const page = await app.firstWindow();
-    await page.getByRole("button", { name: "New Project" }).waitFor({
+    await page.getByRole("button", { name: "Locate Root" }).waitFor({
       timeout: 10000
     });
     await app.evaluate(
@@ -103,7 +103,13 @@ const assertIncludes = (text, expected, label) => {
       parentDirectory
     );
 
-    log("Starting Inception from the Project Shelf.");
+    log("Locating the project root.");
+    await page.getByRole("button", { name: "Locate Root" }).click();
+    await page.getByRole("button", { name: "New Project" }).waitFor({
+      timeout: 10000
+    });
+
+    log("Starting Inception from the Mission Dashboard.");
     await page.getByRole("button", { name: "New Project" }).click();
 
     await fillByLabel(
@@ -134,10 +140,6 @@ const assertIncludes = (text, expected, label) => {
     await page.getByRole("button", { name: "Requirements" }).click();
 
     await fillByLabel(page, "What should Starship call this project?", projectName);
-    await page.getByRole("button", { name: "Choose" }).click();
-    await page
-      .getByLabel("Where should the project folder be created?", { exact: true })
-      .waitFor({ timeout: 5000 });
     await fillByLabel(
       page,
       "What is the one-line offer or premise?",

@@ -110,7 +110,7 @@ export const IntentLedgerEditor = ({
             onClick={onClose}
             className="h-8 rounded-md border border-zinc-700 px-3 text-sm font-medium text-zinc-100 hover:border-emerald-400 hover:text-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300"
           >
-            Shelf
+            Dashboard
           </button>
           <button
             type="button"

@@ -1,4 +1,4 @@
-import { app, dialog, ipcMain } from "electron";
+import { app, ipcMain } from "electron";
 import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -7,9 +7,7 @@ import type {
   IntentLedger,
   IntentLedgerInput,
   Project,
-  ProjectId,
-  ShelfLaunchRequest,
-  ShelfLaunchResponse
+  ProjectId
 } from "../shared/ipc";
 
 type ProjectRow = {
@@ -31,6 +29,15 @@ type IntentLedgerRow = {
 
 type HeadlessCacheRow = {
   result: string;
+};
+
+type RootSettingsRow = {
+  root_path: string;
+};
+
+type IgnoredProjectPathRow = {
+  path: string;
+  ignored: number;
 };
 
 export class StarshipDb {
@@ -64,15 +71,74 @@ export class StarshipDb {
         result text not null,
         created_at text not null
       );
+
+      create table if not exists root_settings (
+        id integer primary key check (id = 1),
+        root_path text not null,
+        updated_at text not null
+      );
+
+      create table if not exists ignored_project_paths (
+        path text primary key,
+        ignored integer not null check (ignored in (0, 1)),
+        updated_at text not null
+      );
     `);
+  }
+
+  getRootPath(): string | null {
+    const row = this.db
+      .prepare("select root_path from root_settings where id = 1")
+      .get() as RootSettingsRow | undefined;
+
+    return row?.root_path ?? null;
+  }
+
+  setRootPath(rootPath: string): string {
+    const resolvedPath = path.resolve(rootPath);
+    this.db
+      .prepare(
+        `insert into root_settings (id, root_path, updated_at)
+         values (1, ?, ?)
+         on conflict(id) do update set
+           root_path = excluded.root_path,
+           updated_at = excluded.updated_at`
+      )
+      .run(resolvedPath, new Date().toISOString());
+
+    return resolvedPath;
   }
 
   listProjects(): Project[] {
     const rows = this.db
-      .prepare("select id, name, path, created_at from projects order by created_at desc")
+      .prepare("select id, name, path, created_at from projects order by lower(name), path")
       .all() as ProjectRow[];
 
     return rows.map(rowToProject);
+  }
+
+  syncDiscoveredProjects(projectPaths: string[]): Project[] {
+    const resolvedPaths = Array.from(
+      new Set(projectPaths.map((projectPath) => path.resolve(projectPath)))
+    ).sort((a, b) => a.localeCompare(b));
+
+    const sync = this.db.transaction((pathsToKeep: string[]) => {
+      if (pathsToKeep.length === 0) {
+        this.db.prepare("delete from projects").run();
+      } else {
+        const placeholders = pathsToKeep.map(() => "?").join(", ");
+        this.db
+          .prepare(`delete from projects where path not in (${placeholders})`)
+          .run(...pathsToKeep);
+      }
+
+      for (const projectPath of pathsToKeep) {
+        this.addProject(projectPath);
+      }
+    });
+
+    sync(resolvedPaths);
+    return this.listProjects();
   }
 
   addProject(projectPath: string): Project {
@@ -100,6 +166,37 @@ export class StarshipDb {
       .run(row.id, row.name, row.path, row.created_at);
 
     return rowToProject(row);
+  }
+
+  setProjectIgnored(projectPath: string, ignored: boolean): void {
+    const resolvedPath = path.resolve(projectPath);
+    this.db
+      .prepare(
+        `insert into ignored_project_paths (path, ignored, updated_at)
+         values (?, ?, ?)
+         on conflict(path) do update set
+           ignored = excluded.ignored,
+           updated_at = excluded.updated_at`
+      )
+      .run(resolvedPath, ignored ? 1 : 0, new Date().toISOString());
+  }
+
+  getIgnoredProjectPaths(projectPaths: string[]): Map<string, boolean> {
+    const resolvedPaths = Array.from(
+      new Set(projectPaths.map((projectPath) => path.resolve(projectPath)))
+    );
+    if (resolvedPaths.length === 0) {
+      return new Map();
+    }
+
+    const placeholders = resolvedPaths.map(() => "?").join(", ");
+    const rows = this.db
+      .prepare(
+        `select path, ignored from ignored_project_paths where path in (${placeholders})`
+      )
+      .all(...resolvedPaths) as IgnoredProjectPathRow[];
+
+    return new Map(rows.map((row) => [row.path, row.ignored === 1]));
   }
 
   getProject(projectId: ProjectId): Project | null {
@@ -203,34 +300,7 @@ export const createStarshipDb = (): StarshipDb => {
   return new StarshipDb(dbPath);
 };
 
-export const registerShelfHandlers = (db: StarshipDb): void => {
-  ipcMain.handle("shelf:listProjects", () => db.listProjects());
-
-  ipcMain.handle("shelf:addProject", async () => {
-    const result = await dialog.showOpenDialog({
-      title: "Add Project",
-      properties: ["openDirectory"]
-    });
-
-    if (result.canceled || result.filePaths.length === 0) {
-      return null;
-    }
-
-    return db.addProject(result.filePaths[0]);
-  });
-
-  ipcMain.handle(
-    "shelf:launch",
-    (_event, request: ShelfLaunchRequest): ShelfLaunchResponse => {
-    const project = db.getProject(request.projectId);
-    if (!project) {
-      throw new Error(`Project not found: ${request.projectId}`);
-    }
-
-    return { project };
-    }
-  );
-
+export const registerIntentHandlers = (db: StarshipDb): void => {
   ipcMain.handle("intent:getLedger", (_event, request: { projectId: string }) =>
     db.getIntentLedger(request.projectId)
   );

@@ -1,4 +1,4 @@
-import { dialog, ipcMain } from "electron";
+import { ipcMain } from "electron";
 import type {
   InceptionCreateProjectRequest,
   InceptionCreateProjectResponse,
@@ -30,19 +30,6 @@ export const registerInceptionHandlers = (db: StarshipDb): void => {
     ): Promise<InceptionDraftDocumentsResponse> =>
       draftInceptionDocuments(db, request.interview)
   );
-
-  ipcMain.handle("inception:chooseParentDirectory", async () => {
-    const result = await dialog.showOpenDialog({
-      title: "Choose Project Parent Folder",
-      properties: ["openDirectory", "createDirectory"]
-    });
-
-    if (result.canceled || result.filePaths.length === 0) {
-      return null;
-    }
-
-    return result.filePaths[0];
-  });
 
   ipcMain.handle(
     "inception:createProject",

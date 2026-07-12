@@ -6,9 +6,9 @@ import type {
 } from "../../shared/ipc";
 
 type InceptionProps = {
+  rootPath: string | null;
   onCancel: () => void;
   onComplete: (interview: InceptionInterview) => void;
-  onChooseParentDirectory: () => Promise<string | null>;
 };
 
 const emptyIntent: IntentInterview = {
@@ -31,9 +31,9 @@ const emptyRequirements: RequirementsInterview = {
 };
 
 export const Inception = ({
+  rootPath,
   onCancel,
-  onComplete,
-  onChooseParentDirectory
+  onComplete
 }: InceptionProps): JSX.Element => {
   const [step, setStep] = useState<"intent" | "requirements">("intent");
   const [intent, setIntent] = useState<IntentInterview>(emptyIntent);
@@ -55,20 +55,24 @@ export const Inception = ({
     () =>
       [
         requirements.projectName,
-        requirements.parentDirectory,
         requirements.oneLiner,
         requirements.firstVersionScope,
         requirements.audience,
         requirements.stack,
         requirements.outOfScope
-      ].every((value) => value.trim().length > 0),
-    [requirements]
+      ].every((value) => value.trim().length > 0) &&
+      rootPath !== null &&
+      rootPath.trim().length > 0,
+    [requirements, rootPath]
   );
 
   const completeInterview = (): void => {
     onComplete({
       intent: trimIntent(intent),
-      requirements: trimRequirements(requirements)
+      requirements: trimRequirements({
+        ...requirements,
+        parentDirectory: rootPath ?? ""
+      })
     });
   };
 
@@ -86,7 +90,7 @@ export const Inception = ({
           onClick={onCancel}
           className="h-8 rounded-md border border-zinc-700 px-3 text-sm font-medium text-zinc-100 hover:border-emerald-400 hover:text-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300"
         >
-          Shelf
+          Dashboard
         </button>
       </header>
 
@@ -100,9 +104,9 @@ export const Inception = ({
           />
         ) : (
           <RequirementsStep
+            rootPath={rootPath}
             requirements={requirements}
             onChange={setRequirements}
-            onChooseParentDirectory={onChooseParentDirectory}
             onBack={() => setStep("intent")}
             onComplete={completeInterview}
             canComplete={requirementsComplete}
@@ -199,18 +203,18 @@ const IntentStep = ({
 };
 
 type RequirementsStepProps = {
+  rootPath: string | null;
   requirements: RequirementsInterview;
   onChange: (requirements: RequirementsInterview) => void;
-  onChooseParentDirectory: () => Promise<string | null>;
   onBack: () => void;
   onComplete: () => void;
   canComplete: boolean;
 };
 
 const RequirementsStep = ({
+  rootPath,
   requirements,
   onChange,
-  onChooseParentDirectory,
   onBack,
   onComplete,
   canComplete
@@ -220,13 +224,6 @@ const RequirementsStep = ({
     value: string
   ): void => {
     onChange({ ...requirements, [field]: value });
-  };
-
-  const chooseParentDirectory = async (): Promise<void> => {
-    const parentDirectory = await onChooseParentDirectory();
-    if (parentDirectory) {
-      setField("parentDirectory", parentDirectory);
-    }
   };
 
   return (
@@ -258,19 +255,11 @@ const RequirementsStep = ({
           value={requirements.projectName}
           onChange={(value) => setField("projectName", value)}
         />
-        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2">
-          <TextInput
-            label="Where should the project folder be created?"
-            value={requirements.parentDirectory}
-            onChange={(value) => setField("parentDirectory", value)}
-          />
-          <button
-            type="button"
-            onClick={() => void chooseParentDirectory()}
-            className="h-10 rounded-md border border-zinc-700 px-3 text-sm font-medium text-zinc-100 hover:border-emerald-400 hover:text-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300"
-          >
-            Choose
-          </button>
+        <div>
+          <span className="text-sm font-medium text-zinc-200">Project root</span>
+          <p className="mt-2 truncate rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm text-zinc-400">
+            {rootPath ?? "Locate a root folder before creating a project"}
+          </p>
         </div>
         <TextArea
           label="What is the one-line offer or premise?"

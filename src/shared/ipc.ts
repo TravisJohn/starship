@@ -8,6 +8,17 @@ export type Project = {
   createdAt: string;
 };
 
+export type MissionProject = Project & {
+  ignored: boolean;
+  lastActivityAt: string | null;
+};
+
+export type MissionDashboardState = {
+  rootPath: string | null;
+  projects: MissionProject[];
+  scanError?: string;
+};
+
 export type IntentLedger = {
   projectId: ProjectId;
   purpose: string;
@@ -132,11 +143,16 @@ export type PtyExitEvent = {
   signal?: number;
 };
 
-export type ShelfLaunchRequest = {
+export type DashboardSetIgnoredRequest = {
+  projectPath: string;
+  ignored: boolean;
+};
+
+export type DashboardLaunchRequest = {
   projectId: ProjectId;
 };
 
-export type ShelfLaunchResponse = {
+export type DashboardLaunchResponse = {
   project: Project;
 };
 
@@ -189,17 +205,25 @@ export type RendererToMainInvokeMap = {
     request: PtyKillRequest;
     response: void;
   };
-  "shelf:addProject": {
+  "dashboard:getState": {
     request: void;
-    response: Project | null;
+    response: MissionDashboardState;
   };
-  "shelf:listProjects": {
+  "dashboard:locateRoot": {
     request: void;
-    response: Project[];
+    response: MissionDashboardState | null;
   };
-  "shelf:launch": {
-    request: ShelfLaunchRequest;
-    response: ShelfLaunchResponse;
+  "dashboard:rescan": {
+    request: void;
+    response: MissionDashboardState;
+  };
+  "dashboard:setIgnored": {
+    request: DashboardSetIgnoredRequest;
+    response: MissionProject;
+  };
+  "dashboard:launch": {
+    request: DashboardLaunchRequest;
+    response: DashboardLaunchResponse;
   };
   "intent:getLedger": {
     request: IntentLedgerRequest;
@@ -216,10 +240,6 @@ export type RendererToMainInvokeMap = {
   "inception:draftDocuments": {
     request: InceptionDraftDocumentsRequest;
     response: InceptionDraftDocumentsResponse;
-  };
-  "inception:chooseParentDirectory": {
-    request: void;
-    response: string | null;
   };
   "inception:createProject": {
     request: InceptionCreateProjectRequest;
@@ -253,10 +273,12 @@ export type StarshipApi = {
     onData: (handler: (event: PtyDataEvent) => void) => Unsubscribe;
     onExit: (handler: (event: PtyExitEvent) => void) => Unsubscribe;
   };
-  shelf: {
-    addProject: () => Promise<Project | null>;
-    listProjects: () => Promise<Project[]>;
-    launch: (request: ShelfLaunchRequest) => Promise<ShelfLaunchResponse>;
+  dashboard: {
+    getState: () => Promise<MissionDashboardState>;
+    locateRoot: () => Promise<MissionDashboardState | null>;
+    rescan: () => Promise<MissionDashboardState>;
+    setIgnored: (request: DashboardSetIgnoredRequest) => Promise<MissionProject>;
+    launch: (request: DashboardLaunchRequest) => Promise<DashboardLaunchResponse>;
   };
   intent: {
     getLedger: (request: IntentLedgerRequest) => Promise<IntentLedger | null>;
@@ -269,7 +291,6 @@ export type StarshipApi = {
     draftDocuments: (
       request: InceptionDraftDocumentsRequest
     ) => Promise<InceptionDraftDocumentsResponse>;
-    chooseParentDirectory: () => Promise<string | null>;
     createProject: (
       request: InceptionCreateProjectRequest
     ) => Promise<InceptionCreateProjectResponse>;

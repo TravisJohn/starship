@@ -13,10 +13,12 @@ export const createInceptionProject = async (
   db: StarshipDb,
   request: InceptionCreateProjectRequest
 ): Promise<InceptionCreateProjectResponse> => {
-  const projectPath = resolveProjectPath(
-    request.interview.requirements.parentDirectory,
-    request.interview.requirements.projectName
-  );
+  const rootPath = db.getRootPath();
+  if (!rootPath) {
+    throw new Error("Locate a root folder before creating a new project.");
+  }
+
+  const projectPath = resolveProjectPath(rootPath, request.interview.requirements.projectName);
   ensureCreatableProjectDirectory(projectPath);
 
   fs.mkdirSync(projectPath, { recursive: true });
@@ -26,6 +28,7 @@ export const createInceptionProject = async (
   await initializeGitRepository(projectPath);
 
   const project = db.addProject(projectPath);
+  db.setProjectIgnored(projectPath, false);
   const intentLedger = db.saveIntentLedger(toIntentLedgerInput(project.id, request));
   const coldPrompt = composeColdPrompt(request);
 

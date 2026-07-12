@@ -12,7 +12,7 @@ import { Inception } from "./components/Inception";
 import { InceptionReview } from "./components/InceptionReview";
 import { IntentLedgerEditor } from "./components/IntentLedgerEditor";
 import { Kanban } from "./components/Kanban";
-import { Shelf } from "./components/Shelf";
+import { MissionDashboard } from "./components/MissionDashboard";
 import { StatusDot } from "./components/StatusDot";
 import { SubagentStrip } from "./components/SubagentStrip";
 import { Terminal } from "./components/Terminal";
@@ -43,6 +43,7 @@ export const App = (): JSX.Element => {
   const [intentProject, setIntentProject] = useState<Project | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [inceptionRootPath, setInceptionRootPath] = useState<string | null>(null);
   const [activePtySessionId, setActivePtySessionId] = useState<string | null>(null);
   const activePtySessionIdRef = useRef<string | null>(null);
   const [observation, setObservation] = useState<ObservationSnapshot | null>(null);
@@ -124,7 +125,7 @@ export const App = (): JSX.Element => {
             }}
             className="ml-4 h-8 shrink-0 rounded-md border border-zinc-700 px-3 text-sm font-medium text-zinc-100 hover:border-emerald-400 hover:text-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300"
           >
-            Shelf
+            Dashboard
           </button>
         </header>
         <SubagentStrip agents={observation?.subagents ?? []} />
@@ -152,11 +153,9 @@ export const App = (): JSX.Element => {
     return (
       <main className="h-screen min-h-0 bg-zinc-950">
         <Inception
+          rootPath={inceptionRootPath}
           onCancel={() => setView("shelf")}
           onComplete={completeInterview}
-          onChooseParentDirectory={() =>
-            window.starship.inception.chooseParentDirectory()
-          }
         />
       </main>
     );
@@ -216,9 +215,12 @@ export const App = (): JSX.Element => {
 
   return (
     <main className="h-screen min-h-0 bg-zinc-950">
-      <Shelf
+      <MissionDashboard
         onLaunch={(project) => setActiveSession({ project, args: [] })}
-        onNewProject={() => setView("inception")}
+        onNewProject={(rootPath) => {
+          setInceptionRootPath(rootPath);
+          setView("inception");
+        }}
         onEditIntent={(project) => {
           setIntentProject(project);
           setView("intentLedger");

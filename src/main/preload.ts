@@ -31,10 +31,12 @@ const api: StarshipApi = {
       };
     }
   },
-  shelf: {
-    addProject: () => ipcRenderer.invoke("shelf:addProject"),
-    listProjects: () => ipcRenderer.invoke("shelf:listProjects"),
-    launch: (request) => ipcRenderer.invoke("shelf:launch", request)
+  dashboard: {
+    getState: () => ipcRenderer.invoke("dashboard:getState"),
+    locateRoot: () => ipcRenderer.invoke("dashboard:locateRoot"),
+    rescan: () => ipcRenderer.invoke("dashboard:rescan"),
+    setIgnored: (request) => ipcRenderer.invoke("dashboard:setIgnored", request),
+    launch: (request) => ipcRenderer.invoke("dashboard:launch", request)
   },
   intent: {
     getLedger: (request) => ipcRenderer.invoke("intent:getLedger", request),
@@ -45,8 +47,6 @@ const api: StarshipApi = {
       ipcRenderer.invoke("inception:renderTemplates", request),
     draftDocuments: (request) =>
       ipcRenderer.invoke("inception:draftDocuments", request),
-    chooseParentDirectory: () =>
-      ipcRenderer.invoke("inception:chooseParentDirectory"),
     createProject: (request) =>
       ipcRenderer.invoke("inception:createProject", request)
   },
