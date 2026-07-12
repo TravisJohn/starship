@@ -1,5 +1,6 @@
 import { ipcMain, type IpcMainInvokeEvent, type WebContents } from "electron";
 import os from "node:os";
+import path from "node:path";
 import * as pty from "node-pty";
 import type {
   PtyKillRequest,
@@ -46,7 +47,7 @@ export class PtyManager {
       throw new Error(`PTY session already exists: ${request.sessionId}`);
     }
 
-    const terminal = pty.spawn(request.command, request.args, {
+    const terminal = pty.spawn(normalizeCommand(request.command), request.args, {
       name: "xterm-256color",
       cols: Math.max(2, request.cols),
       rows: Math.max(1, request.rows),
@@ -110,3 +111,16 @@ export class PtyManager {
     session.terminal.kill();
   }
 }
+
+const normalizeCommand = (command: string): string => {
+  if (
+    os.platform() !== "win32" ||
+    path.extname(command) !== "" ||
+    command.includes("/") ||
+    command.includes("\\")
+  ) {
+    return command;
+  }
+
+  return `${command}.exe`;
+};

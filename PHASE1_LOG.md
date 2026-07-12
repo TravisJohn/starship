@@ -105,3 +105,25 @@ Phase 1 scope: Electron shell, manual Project Shelf, embedded xterm.js terminal 
 - Ruled out `intent_ledger`: the only table created in T4 is `projects`.
 - Ruled out writes into `~/.claude/projects`: shelf persistence writes to Starship's own SQLite database only.
 - Native rebuild risk remains present because both native dependencies depend on either Electron-compatible prebuilds or a complete Visual Studio Build Tools installation.
+
+## T5. Wire Launch to real Claude Code session
+
+### Actions and reasoning
+- Updated the renderer launch handoff so selecting Launch resolves the project through `shelf:launch`, switches to a single terminal view, and starts `claude` through the existing PTY bridge with `cwd` set to the project path.
+- Kept the terminal view to one pane plus a narrow header for project identity and returning to the shelf. No Kanban, Intent panel, DAG, Timeline, briefing surface, headless call, or prompt injection was added.
+- A bounded launch test showed `node-pty` on Windows does not apply PATHEXT for bare `claude`, even though `claude.exe` is on PATH. Added main-process normalization that appends `.exe` to extensionless command names on Windows before spawning.
+- After normalization, a bounded launch test from a temporary shelf project started Claude Code inside the embedded terminal and showed Claude's workspace trust TUI for that project path.
+- Ran a focused TUI key check at Claude's trust prompt: ArrowDown visibly moved selection to "No, exit", ArrowUp restored "Yes, I trust this folder", and Ctrl+C was sent without terminal crash or visible corruption.
+
+### Decisions not explicit in the plan
+- Added a small Shelf button in the terminal header. It unmounts the terminal, which triggers the existing PTY kill cleanup, and gives the single-user app a way back without adding another Phase 1 concept.
+- Did not add `claude` PATH discovery or bundling. The PTY spawn uses the literal `claude` command, matching T5's assumption.
+- The `.exe` normalization is intentionally generic Windows spawn hygiene, not Claude discovery: it does not search PATH, inspect install locations, or special-case Claude.
+
+### Deviations
+- None so far.
+
+### CLAUDE.md / PRD risk review
+- Ruled out hidden prompt injection: Launch starts Claude only; it does not send text to the TUI.
+- Ruled out Phase 2+ panes and state.
+- `~/.claude/projects` remains untouched by Starship code; any Claude state writes come from the real Claude Code process the user explicitly launches.
