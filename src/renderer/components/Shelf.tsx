@@ -4,9 +4,14 @@ import type { Project } from "../../shared/ipc";
 type ShelfProps = {
   onLaunch: (project: Project) => void;
   onNewProject: () => void;
+  onEditIntent: (project: Project) => void;
 };
 
-export const Shelf = ({ onLaunch, onNewProject }: ShelfProps): JSX.Element => {
+export const Shelf = ({
+  onLaunch,
+  onNewProject,
+  onEditIntent
+}: ShelfProps): JSX.Element => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -89,13 +94,22 @@ export const Shelf = ({ onLaunch, onNewProject }: ShelfProps): JSX.Element => {
                     {project.path}
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => void launchProject(project.id)}
-                  className="mt-4 h-9 w-full rounded-md border border-zinc-700 text-sm font-medium text-zinc-100 hover:border-emerald-400 hover:text-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300"
-                >
-                  Launch
-                </button>
+                <div className="mt-4 grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => onEditIntent(project)}
+                    className="h-9 rounded-md border border-zinc-700 text-sm font-medium text-zinc-100 hover:border-emerald-400 hover:text-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                  >
+                    Intent
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void launchProject(project.id)}
+                    className="h-9 rounded-md border border-zinc-700 text-sm font-medium text-zinc-100 hover:border-emerald-400 hover:text-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                  >
+                    Launch
+                  </button>
+                </div>
               </article>
             ))}
           </div>

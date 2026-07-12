@@ -8,10 +8,17 @@ import type {
 import { ColdPromptReview } from "./components/ColdPromptReview";
 import { Inception } from "./components/Inception";
 import { InceptionReview } from "./components/InceptionReview";
+import { IntentLedgerEditor } from "./components/IntentLedgerEditor";
 import { Shelf } from "./components/Shelf";
 import { Terminal } from "./components/Terminal";
 
-type AppView = "shelf" | "inception" | "drafting" | "review" | "coldPrompt";
+type AppView =
+  | "shelf"
+  | "inception"
+  | "drafting"
+  | "review"
+  | "coldPrompt"
+  | "intentLedger";
 
 type ActiveSession = {
   project: Project;
@@ -28,6 +35,7 @@ export const App = (): JSX.Element => {
   );
   const [createdProject, setCreatedProject] =
     useState<InceptionCreateProjectResponse | null>(null);
+  const [intentProject, setIntentProject] = useState<Project | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
@@ -154,11 +162,26 @@ export const App = (): JSX.Element => {
     );
   }
 
+  if (view === "intentLedger" && intentProject) {
+    return (
+      <main className="h-screen min-h-0 bg-zinc-950">
+        <IntentLedgerEditor
+          project={intentProject}
+          onClose={() => setView("shelf")}
+        />
+      </main>
+    );
+  }
+
   return (
     <main className="h-screen min-h-0 bg-zinc-950">
       <Shelf
         onLaunch={(project) => setActiveSession({ project, args: [] })}
         onNewProject={() => setView("inception")}
+        onEditIntent={(project) => {
+          setIntentProject(project);
+          setView("intentLedger");
+        }}
       />
     </main>
   );
