@@ -12,12 +12,14 @@
     "build:renderer": "tsc -b tsconfig.shared.json tsconfig.renderer.json && vite build",
     "build": "npm run build:main && npm run build:renderer",
     "test": "vitest run",
+    "verify:shelf": "npm run build && node scripts/verify-shelf-persistence.cjs",
     "verify:terminal:powershell": "npm run build && node scripts/verify-terminal-powershell.cjs",
     "dist": "npm run build && electron-builder",
-    "postinstall": "electron-rebuild -w node-pty || node scripts/verify-node-pty-prebuild.cjs"
+    "postinstall": "electron-rebuild --only better-sqlite3 && electron-rebuild --only node-pty || node scripts/verify-native-modules.cjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
+    "better-sqlite3": "^12.11.1",
     "electron": "latest",
     "node-pty": "^1.1.0",
     "react": "^18.3.1",
@@ -27,6 +29,7 @@
   },
   "devDependencies": {
     "@electron/rebuild": "^4.2.0",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "latest",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",

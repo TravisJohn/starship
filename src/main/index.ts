@@ -1,8 +1,10 @@
 import { app, BrowserWindow } from "electron";
 import path from "node:path";
+import { createStarshipDb, registerShelfHandlers, type StarshipDb } from "./db";
 import { PtyManager } from "./pty/ptyManager";
 
 let mainWindow: BrowserWindow | null = null;
+let db: StarshipDb | null = null;
 const ptyManager = new PtyManager();
 
 const createMainWindow = (): void => {
@@ -30,6 +32,8 @@ const createMainWindow = (): void => {
 };
 
 app.whenReady().then(() => {
+  db = createStarshipDb();
+  registerShelfHandlers(db);
   ptyManager.registerIpcHandlers();
   createMainWindow();
 
@@ -48,4 +52,5 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   ptyManager.killAll();
+  db?.close();
 });

@@ -54,7 +54,7 @@ Phase 1 scope: Electron shell, manual Project Shelf, embedded xterm.js terminal 
 ### Actions and reasoning
 - Installed `node-pty`, `xterm`, `xterm-addon-fit`, and `@electron/rebuild` as required by T3.
 - npm warned that `xterm` and `xterm-addon-fit` are deprecated in favor of `@xterm/*` packages. I kept the plan-specified packages for Phase 1 rather than substituting package names mid-phase.
-- Forced `electron-rebuild -f -w node-pty`; it failed because Visual Studio Build Tools are present but the Spectre-mitigated VC libraries required by `node-pty` are missing. Verified the `node-pty` Windows prebuild loads under Electron's embedded Node with `ELECTRON_RUN_AS_NODE=1`, so the app can still exercise ConPTY on this machine. The postinstall hook now attempts `electron-rebuild -w node-pty` and falls back to a prebuild load verification script if rebuild fails.
+- Forced `electron-rebuild -f -w node-pty`; it failed because Visual Studio Build Tools are present but the Spectre-mitigated VC libraries required by `node-pty` are missing. Verified the `node-pty` Windows prebuild loads under Electron's embedded Node with `ELECTRON_RUN_AS_NODE=1`, so the app can still exercise ConPTY on this machine.
 - Added `src/main/pty/ptyManager.ts`. The main process owns PTY sessions keyed by renderer-supplied session id, sends `pty:data`/`pty:exit` back only to the WebContents that spawned the session, and kills all sessions on app quit.
 - Added `src/renderer/components/Terminal.tsx`, using xterm.js with the fit addon, direct keyboard/data forwarding, and debounced `ResizeObserver` resize propagation.
 - Temporarily routed `App.tsx` to a full-pane PowerShell diagnostic terminal so T3 can verify the bridge before the Project Shelf exists.
@@ -62,13 +62,13 @@ Phase 1 scope: Electron shell, manual Project Shelf, embedded xterm.js terminal 
 - The first verifier run showed the built renderer was blank because Vite emitted absolute `/assets/...` URLs for `file://` loading. Set `base: "./"` in `vite.config.ts`; this is needed for packaged Electron loading and is still within T1/T3 shell scope.
 - The second verifier run reached the first PowerShell marker, proving keyboard input traversed xterm to ConPTY. The run then failed in the harness because Playwright exposes BrowserWindow as an evaluate handle; updated the resize step accordingly.
 - The final `npm run verify:terminal:powershell` pass succeeded: a built Electron app launched, PowerShell spawned in the embedded terminal, a marker command appeared before resize, the window resized, and a second marker appeared after resize.
-- Ran `npm run postinstall`; it reproduced the Spectre-library rebuild failure and then exited successfully through the Electron prebuild verification fallback.
+- Ran `npm run postinstall`; it reproduced the Spectre-library rebuild failure and then exited successfully through the Electron native-module verification fallback.
 
 ### Decisions not explicit in the plan
 - The T3 diagnostic terminal passes an empty `cwd`; the main process interprets that as its own current working directory. This avoids hardcoding this repo's path into renderer code while still letting T5 pass an explicit project path.
 - Resize propagation is debounced at 90 ms. This is long enough to coalesce rapid ResizeObserver events during window drags but short enough that interactive resizing still feels immediate.
 - React StrictMode was removed from the renderer entry. Its dev-only double mount would spawn and kill two PTYs for one visible terminal, which would pollute the ConPTY go/no-go signal.
-- The postinstall rebuild fallback is deliberately narrow: it only accepts failure if `node-pty` can load under Electron. This keeps a missing toolchain from blocking the current machine while still failing installs where no compatible prebuild exists.
+- The postinstall rebuild fallback is deliberately narrow: it only accepts failure if native modules load under Electron. This keeps a missing toolchain from blocking the current machine while still failing installs where no compatible native binary exists.
 - Playwright Core was added as a dev dependency only for Phase 1 verification. It does not add a product surface or any Phase 2 behavior.
 
 ### Deviations
@@ -78,3 +78,30 @@ Phase 1 scope: Electron shell, manual Project Shelf, embedded xterm.js terminal 
 - Hit the native rebuild risk directly. It is not blocking runtime on this machine because the prebuild loads under Electron, but it remains a first-run/packaging risk.
 - Resize/reflow risk is addressed with a debounced ResizeObserver and by sending `pty:resize` only after a PTY has spawned and the terminal size has actually changed.
 - Ruled out `~/.claude/projects` writes and Phase 2+ scope creep.
+
+## T4. Project Shelf - minimal
+
+### Actions and reasoning
+- Installed `better-sqlite3` for the single Phase 1 `projects` table.
+- Initial Electron load check for `better-sqlite3` failed because npm installed a Node ABI binary. Forced `electron-rebuild -f -w better-sqlite3`; the command still reported failure because `node-pty` hit the Spectre-library issue, but `better-sqlite3` had been rebuilt successfully enough to load under Electron afterward.
+- Replaced the T3 node-pty-only native verification fallback with `scripts/verify-native-modules.cjs`, which checks both `node-pty` and `better-sqlite3` under Electron.
+- Ran the updated `npm run postinstall`: `better-sqlite3` rebuilt cleanly, `node-pty` still failed on missing Spectre libraries, and the fallback verified both native modules load under Electron.
+- Added `src/main/db.ts` with only the `projects` table: `id`, `name`, `path`, `created_at`. No `intent_ledger` or other Phase 2 schema was added.
+- Added shelf IPC handlers for `shelf:addProject`, `shelf:listProjects`, and `shelf:launch`. `shelf:addProject` uses Electron's folder picker and stores the selected folder path.
+- Added `src/renderer/components/Shelf.tsx` with persisted project cards, Add Project, and Launch buttons.
+- Added a Playwright Core shelf verification script that stubs Electron's native dialog in the main process, adds a temporary folder with spaces in its path, restarts the app with the same test DB, and confirms the project persists.
+- The first shelf verifier run did add the project, but the assertion was too broad because both the card title and path contained the project name. Narrowed the check to the card heading.
+- The final `npm run verify:shelf` pass succeeded: a folder with spaces in the path was added, the app restarted against the same SQLite database, and the project card persisted.
+
+### Decisions not explicit in the plan
+- The database path defaults to `app.getPath("userData")/starship.sqlite`, with `STARSHIP_DB_PATH` supported for verification only. This avoids writing test projects into the real app database while keeping production persistence local-first.
+- Duplicate folder adds return the existing project instead of failing. This keeps manual use idempotent and avoids duplicate cards for the same path.
+- `shelf:launch` only resolves and returns the selected project in T4. The actual Claude terminal handoff remains T5.
+
+### Deviations
+- `better-sqlite3` also needs native-module handling under Electron. This was not listed in T4, but follows directly from the approved stack's SQLite requirement.
+
+### CLAUDE.md / PRD risk review
+- Ruled out `intent_ledger`: the only table created in T4 is `projects`.
+- Ruled out writes into `~/.claude/projects`: shelf persistence writes to Starship's own SQLite database only.
+- Native rebuild risk remains present because both native dependencies depend on either Electron-compatible prebuilds or a complete Visual Studio Build Tools installation.
