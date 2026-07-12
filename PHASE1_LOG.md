@@ -27,3 +27,24 @@ Phase 1 scope: Electron shell, manual Project Shelf, embedded xterm.js terminal 
 - Ruled out `~/.claude/projects` writes: no code has been added that reads or writes Claude state directories.
 - Ruled out Phase 2+ scope creep: no Kanban, Intent panel, DAG, Timeline, headless Claude calls, Intent Ledger, or Inception code/files have been created.
 - Native rebuild risk remains open for T3 because Visual Studio build tools are not discoverable on PATH.
+
+## T2. Typed IPC contract + preload
+
+### Actions and reasoning
+- Defined the Phase 1 IPC surface in `src/shared/ipc.ts`: PTY spawn/write/resize/kill, PTY data/exit events, and shelf add/list/launch types.
+- Added a preload bridge using `contextBridge` and `ipcRenderer` that exposes only the typed `window.starship` API to the renderer.
+- Added a renderer global declaration so React components consume `window.starship` without importing Electron or Node modules.
+- Updated the TypeScript build scripts to use `tsc -b` for project references after the first compile showed `tsc -p` was not building the shared contract before main/preload. Shared declarations emit under `dist/shared` so generated type files stay out of `src/shared`.
+
+### Decisions not explicit in the plan
+- The PTY spawn request includes an explicit `sessionId`, `args`, `cwd`, `cols`, and `rows`. Supplying the id from the renderer lets T3/T5 keep terminal component lifecycle ownership straightforward while the main process still owns the actual ConPTY session.
+- Event subscriptions return an unsubscribe function. This keeps React effects easy to clean up and reduces the chance that remounts duplicate terminal data listeners.
+- `shelf:launch` returns the resolved project for now, not a spawned PTY. This preserves the T2 contract while leaving the T5 decision about launching Claude through the same PTY bridge until that task.
+
+### Deviations
+- None.
+
+### CLAUDE.md / PRD risk review
+- Ruled out renderer Node access: the renderer receives a narrow preload API only; Electron `nodeIntegration` remains disabled.
+- Ruled out hidden prompt injection: no code writes to a PTY or starts Claude in T2.
+- Ruled out `~/.claude/projects` writes and Phase 2+ scope creep.

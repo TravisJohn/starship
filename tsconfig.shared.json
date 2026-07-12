@@ -9,6 +9,8 @@
     "strict": true,
     "target": "ES2022",
     "lib": ["ES2022"],
+    "outDir": "dist/shared",
+    "rootDir": "src/shared",
     "skipLibCheck": true
   },
   "include": ["src/shared/**/*.ts"]

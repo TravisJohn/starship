@@ -8,8 +8,8 @@
     "dev": "concurrently -k \"npm:dev:renderer\" \"npm:dev:electron\"",
     "dev:renderer": "vite --host 127.0.0.1",
     "dev:electron": "npm run build:main && wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .",
-    "build:main": "tsc -p tsconfig.main.json",
-    "build:renderer": "tsc -p tsconfig.renderer.json && vite build",
+    "build:main": "tsc -b tsconfig.shared.json tsconfig.main.json",
+    "build:renderer": "tsc -b tsconfig.shared.json tsconfig.renderer.json && vite build",
     "build": "npm run build:main && npm run build:renderer",
     "test": "vitest run",
     "dist": "npm run build && electron-builder"
