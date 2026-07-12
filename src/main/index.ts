@@ -35,7 +35,7 @@ const createMainWindow = (): void => {
 app.whenReady().then(() => {
   db = createStarshipDb();
   registerShelfHandlers(db);
-  registerInceptionHandlers();
+  registerInceptionHandlers(db);
   ptyManager.registerIpcHandlers();
   createMainWindow();
 

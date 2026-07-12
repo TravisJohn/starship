@@ -61,6 +61,19 @@ export type InceptionTemplateRenderResponse = {
   missingPlaceholders: string[];
 };
 
+export type InceptionDraftDocumentsRequest = {
+  interview: InceptionInterview;
+};
+
+export type InceptionDraftDocumentsResponse = {
+  templateDir: string;
+  prd: string;
+  claude: string;
+  missingPlaceholders: string[];
+  usedFallback: boolean;
+  errors: string[];
+};
+
 export type IntentLedgerRequest = {
   projectId: ProjectId;
 };
@@ -153,6 +166,10 @@ export type RendererToMainInvokeMap = {
     request: InceptionTemplateRenderRequest;
     response: InceptionTemplateRenderResponse;
   };
+  "inception:draftDocuments": {
+    request: InceptionDraftDocumentsRequest;
+    response: InceptionDraftDocumentsResponse;
+  };
 };
 
 export type MainToRendererEventMap = {
@@ -193,5 +210,8 @@ export type StarshipApi = {
     renderTemplates: (
       request: InceptionTemplateRenderRequest
     ) => Promise<InceptionTemplateRenderResponse>;
+    draftDocuments: (
+      request: InceptionDraftDocumentsRequest
+    ) => Promise<InceptionDraftDocumentsResponse>;
   };
 };

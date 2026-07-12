@@ -51,6 +51,8 @@
     "productName": "Starship",
     "files": [
       "dist/**/*",
+      "prompts/**/*",
+      "templates/**/*",
       "package.json"
     ],
     "directories": {

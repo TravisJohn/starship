@@ -29,6 +29,10 @@ type IntentLedgerRow = {
   updated_at: string;
 };
 
+type HeadlessCacheRow = {
+  result: string;
+};
+
 export class StarshipDb {
   private readonly db: Database.Database;
 
@@ -53,6 +57,12 @@ export class StarshipDb {
         never_do text not null,
         created_at text not null,
         updated_at text not null
+      );
+
+      create table if not exists headless_cache (
+        cache_key text primary key,
+        result text not null,
+        created_at text not null
       );
     `);
   }
@@ -160,6 +170,24 @@ export class StarshipDb {
       createdAt,
       updatedAt: now
     };
+  }
+
+  getHeadlessCache(cacheKey: string): string | null {
+    const row = this.db
+      .prepare("select result from headless_cache where cache_key = ?")
+      .get(cacheKey) as HeadlessCacheRow | undefined;
+
+    return row?.result ?? null;
+  }
+
+  saveHeadlessCache(cacheKey: string, result: string): void {
+    this.db
+      .prepare(
+        `insert into headless_cache (cache_key, result, created_at)
+         values (?, ?, ?)
+         on conflict(cache_key) do update set result = excluded.result`
+      )
+      .run(cacheKey, result, new Date().toISOString());
   }
 
   close(): void {
