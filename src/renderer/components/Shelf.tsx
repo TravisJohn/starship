@@ -3,9 +3,10 @@ import type { Project } from "../../shared/ipc";
 
 type ShelfProps = {
   onLaunch: (project: Project) => void;
+  onNewProject: () => void;
 };
 
-export const Shelf = ({ onLaunch }: ShelfProps): JSX.Element => {
+export const Shelf = ({ onLaunch, onNewProject }: ShelfProps): JSX.Element => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -48,13 +49,22 @@ export const Shelf = ({ onLaunch }: ShelfProps): JSX.Element => {
           <h1 className="text-sm font-semibold leading-none">Starship</h1>
           <p className="mt-1 text-xs leading-none text-zinc-400">Project Shelf</p>
         </div>
-        <button
-          type="button"
-          onClick={() => void addProject()}
-          className="h-9 rounded-md bg-emerald-500 px-3 text-sm font-medium text-zinc-950 hover:bg-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-300"
-        >
-          Add Project
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onNewProject}
+            className="h-9 rounded-md bg-emerald-500 px-3 text-sm font-medium text-zinc-950 hover:bg-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+          >
+            New Project
+          </button>
+          <button
+            type="button"
+            onClick={() => void addProject()}
+            className="h-9 rounded-md border border-zinc-700 px-3 text-sm font-medium text-zinc-100 hover:border-emerald-400 hover:text-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+          >
+            Add Folder
+          </button>
+        </div>
       </header>
 
       <div className="min-h-0 flex-1 overflow-auto p-5">

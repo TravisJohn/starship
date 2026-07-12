@@ -26,6 +26,30 @@ export type IntentLedgerInput = {
   neverDo: string;
 };
 
+export type IntentInterview = {
+  purpose: string;
+  successCriteria: string;
+  acceptedTradeoffs: string;
+  neverDo: string;
+  learningGoal: string;
+};
+
+export type RequirementsInterview = {
+  projectName: string;
+  parentDirectory: string;
+  oneLiner: string;
+  firstVersionScope: string;
+  audience: string;
+  stack: string;
+  constraints: string;
+  outOfScope: string;
+};
+
+export type InceptionInterview = {
+  intent: IntentInterview;
+  requirements: RequirementsInterview;
+};
+
 export type IntentLedgerRequest = {
   projectId: ProjectId;
 };

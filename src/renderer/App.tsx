@@ -1,10 +1,21 @@
 import { useState } from "react";
-import type { Project } from "../shared/ipc";
+import type { InceptionInterview, Project } from "../shared/ipc";
+import { Inception } from "./components/Inception";
 import { Shelf } from "./components/Shelf";
 import { Terminal } from "./components/Terminal";
 
+type AppView = "shelf" | "inception";
+
 export const App = (): JSX.Element => {
+  const [view, setView] = useState<AppView>("shelf");
   const [activeProject, setActiveProject] = useState<Project | null>(null);
+  const [_pendingInterview, setPendingInterview] =
+    useState<InceptionInterview | null>(null);
+
+  const completeInterview = (interview: InceptionInterview): void => {
+    setPendingInterview(interview);
+    setView("shelf");
+  };
 
   if (activeProject) {
     return (
@@ -33,9 +44,23 @@ export const App = (): JSX.Element => {
     );
   }
 
+  if (view === "inception") {
+    return (
+      <main className="h-screen min-h-0 bg-zinc-950">
+        <Inception
+          onCancel={() => setView("shelf")}
+          onComplete={completeInterview}
+        />
+      </main>
+    );
+  }
+
   return (
     <main className="h-screen min-h-0 bg-zinc-950">
-      <Shelf onLaunch={setActiveProject} />
+      <Shelf
+        onLaunch={setActiveProject}
+        onNewProject={() => setView("inception")}
+      />
     </main>
   );
 };
