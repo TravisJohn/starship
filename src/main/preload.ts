@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import type {
+  ObservationSnapshot,
   PtyDataEvent,
   PtyExitEvent,
   StarshipApi
@@ -48,6 +49,17 @@ const api: StarshipApi = {
       ipcRenderer.invoke("inception:chooseParentDirectory"),
     createProject: (request) =>
       ipcRenderer.invoke("inception:createProject", request)
+  },
+  observation: {
+    onSnapshot: (handler) => {
+      const listener = (_event: IpcRendererEvent, payload: ObservationSnapshot): void => {
+        handler(payload);
+      };
+      ipcRenderer.on("observation:snapshot", listener);
+      return () => {
+        ipcRenderer.off("observation:snapshot", listener);
+      };
+    }
   }
 };
 

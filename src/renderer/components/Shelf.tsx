@@ -1,16 +1,20 @@
 import { useEffect, useState } from "react";
-import type { Project } from "../../shared/ipc";
+import type { ObservationStatus, Project } from "../../shared/ipc";
+import { StatusDot } from "./StatusDot";
 
 type ShelfProps = {
   onLaunch: (project: Project) => void;
   onNewProject: () => void;
   onEditIntent: (project: Project) => void;
+  /** Live status for whichever project currently has (or most recently had, this app session) a Starship-launched session. Projects with no entry show a neutral dot - Phase 3 does not persist status across app restarts. */
+  statusByProjectId: Record<string, ObservationStatus>;
 };
 
 export const Shelf = ({
   onLaunch,
   onNewProject,
-  onEditIntent
+  onEditIntent,
+  statusByProjectId
 }: ShelfProps): JSX.Element => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
@@ -86,14 +90,15 @@ export const Shelf = ({
                 key={project.id}
                 className="rounded-lg border border-zinc-800 bg-zinc-900 p-4"
               >
-                <div className="min-w-0">
+                <div className="flex min-w-0 items-center gap-2">
+                  <StatusDot status={statusByProjectId[project.id]} />
                   <h2 className="truncate text-sm font-semibold text-zinc-100">
                     {project.name}
                   </h2>
-                  <p className="mt-2 truncate text-xs text-zinc-400">
-                    {project.path}
-                  </p>
                 </div>
+                <p className="mt-2 truncate text-xs text-zinc-400">
+                  {project.path}
+                </p>
                 <div className="mt-4 grid grid-cols-2 gap-2">
                   <button
                     type="button"

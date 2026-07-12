@@ -2,11 +2,42 @@ import { app, BrowserWindow } from "electron";
 import path from "node:path";
 import { createStarshipDb, registerShelfHandlers, type StarshipDb } from "./db";
 import { registerInceptionHandlers } from "./inception";
+import { ObservationManager } from "./observation/observationManager";
 import { PtyManager } from "./pty/ptyManager";
 
 let mainWindow: BrowserWindow | null = null;
 let db: StarshipDb | null = null;
 const ptyManager = new PtyManager();
+const observationManager = new ObservationManager();
+
+ptyManager.onSpawn((info) => {
+  if (!info.projectId || !info.projectName || info.command.toLowerCase() !== "claude") {
+    return;
+  }
+  if (!mainWindow || mainWindow.webContents.isDestroyed()) {
+    return;
+  }
+
+  const webContents = mainWindow.webContents;
+  observationManager.startObserving(
+    {
+      ptySessionId: info.sessionId,
+      projectId: info.projectId,
+      projectName: info.projectName,
+      projectPath: info.cwd,
+      spawnTimeMs: info.spawnTimeMs
+    },
+    (snapshot) => {
+      if (!webContents.isDestroyed()) {
+        webContents.send("observation:snapshot", snapshot);
+      }
+    }
+  );
+});
+
+ptyManager.onExit((sessionId) => {
+  observationManager.stopObserving(sessionId);
+});
 
 const createMainWindow = (): void => {
   mainWindow = new BrowserWindow({
@@ -53,5 +84,6 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   ptyManager.killAll();
+  observationManager.stopAll();
   db?.close();
 });

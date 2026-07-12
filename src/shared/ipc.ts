@@ -97,6 +97,9 @@ export type PtySpawnRequest = {
   cwd: string;
   cols: number;
   rows: number;
+  /** Present when this pty is a `claude` launch against a known Starship project - lets the main process start observing it. */
+  projectId?: ProjectId;
+  projectName?: string;
 };
 
 export type PtySpawnResponse = {
@@ -135,6 +138,38 @@ export type ShelfLaunchRequest = {
 
 export type ShelfLaunchResponse = {
   project: Project;
+};
+
+export type ObservationStatus = "no-session-detected" | "idle" | "building" | "decision-needed";
+
+export type ObservationDecision = {
+  toolName: string;
+  /** Decision-altitude text naming what's pending - never "waiting for input". */
+  summary: string;
+};
+
+export type KanbanTaskStatus = "pending" | "in_progress" | "completed";
+
+export type KanbanTaskDto = {
+  id: string;
+  label: string;
+  status: KanbanTaskStatus;
+};
+
+export type SubagentEntryDto = {
+  id: string;
+  description: string;
+  subagentType: string | null;
+  status: "running" | "finished";
+};
+
+export type ObservationSnapshot = {
+  ptySessionId: PtySessionId;
+  projectId: ProjectId;
+  status: ObservationStatus;
+  decision?: ObservationDecision;
+  kanban: KanbanTaskDto[];
+  subagents: SubagentEntryDto[];
 };
 
 export type RendererToMainInvokeMap = {
@@ -195,6 +230,7 @@ export type RendererToMainInvokeMap = {
 export type MainToRendererEventMap = {
   "pty:data": PtyDataEvent;
   "pty:exit": PtyExitEvent;
+  "observation:snapshot": ObservationSnapshot;
 };
 
 export type IpcInvokeChannel = keyof RendererToMainInvokeMap;
@@ -237,5 +273,8 @@ export type StarshipApi = {
     createProject: (
       request: InceptionCreateProjectRequest
     ) => Promise<InceptionCreateProjectResponse>;
+  };
+  observation: {
+    onSnapshot: (handler: (snapshot: ObservationSnapshot) => void) => Unsubscribe;
   };
 };

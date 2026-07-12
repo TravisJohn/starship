@@ -1,15 +1,20 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   InceptionCreateProjectResponse,
   InceptionDraftDocumentsResponse,
   InceptionInterview,
+  ObservationSnapshot,
+  ObservationStatus,
   Project
 } from "../shared/ipc";
 import { ColdPromptReview } from "./components/ColdPromptReview";
 import { Inception } from "./components/Inception";
 import { InceptionReview } from "./components/InceptionReview";
 import { IntentLedgerEditor } from "./components/IntentLedgerEditor";
+import { Kanban } from "./components/Kanban";
 import { Shelf } from "./components/Shelf";
+import { StatusDot } from "./components/StatusDot";
+import { SubagentStrip } from "./components/SubagentStrip";
 import { Terminal } from "./components/Terminal";
 
 type AppView =
@@ -38,6 +43,23 @@ export const App = (): JSX.Element => {
   const [intentProject, setIntentProject] = useState<Project | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [activePtySessionId, setActivePtySessionId] = useState<string | null>(null);
+  const activePtySessionIdRef = useRef<string | null>(null);
+  const [observation, setObservation] = useState<ObservationSnapshot | null>(null);
+  const [statusByProjectId, setStatusByProjectId] = useState<Record<string, ObservationStatus>>({});
+
+  useEffect(() => {
+    activePtySessionIdRef.current = activePtySessionId;
+  }, [activePtySessionId]);
+
+  useEffect(() => {
+    return window.starship.observation.onSnapshot((snapshot) => {
+      setStatusByProjectId((current) => ({ ...current, [snapshot.projectId]: snapshot.status }));
+      if (snapshot.ptySessionId === activePtySessionIdRef.current) {
+        setObservation(snapshot);
+      }
+    });
+  }, []);
 
   const completeInterview = (interview: InceptionInterview): void => {
     setPendingInterview(interview);
@@ -80,28 +102,47 @@ export const App = (): JSX.Element => {
     return (
       <main className="flex h-screen min-h-0 flex-col bg-zinc-950 text-zinc-100">
         <header className="flex h-12 shrink-0 items-center justify-between border-b border-zinc-800 px-4">
-          <div className="min-w-0">
-            <h1 className="truncate text-sm font-semibold leading-none">
-              {activeSession.project.name}
-            </h1>
-            <p className="mt-1 truncate text-xs leading-none text-zinc-400">
-              {activeSession.project.path}
-            </p>
+          <div className="flex min-w-0 items-center gap-2">
+            <StatusDot status={observation?.status} />
+            <div className="min-w-0">
+              <h1 className="truncate text-sm font-semibold leading-none">
+                {activeSession.project.name}
+              </h1>
+              <p className="mt-1 truncate text-xs leading-none text-zinc-400">
+                {observation?.status === "decision-needed" && observation.decision
+                  ? observation.decision.summary
+                  : activeSession.project.path}
+              </p>
+            </div>
           </div>
           <button
             type="button"
-            onClick={() => setActiveSession(null)}
+            onClick={() => {
+              setActiveSession(null);
+              setActivePtySessionId(null);
+              setObservation(null);
+            }}
             className="ml-4 h-8 shrink-0 rounded-md border border-zinc-700 px-3 text-sm font-medium text-zinc-100 hover:border-emerald-400 hover:text-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300"
           >
             Shelf
           </button>
         </header>
-        <section className="min-h-0 flex-1">
-          <Terminal
-            command="claude"
-            args={activeSession.args}
-            cwd={activeSession.project.path}
-          />
+        <SubagentStrip agents={observation?.subagents ?? []} />
+        <section className="flex min-h-0 min-w-0 flex-1">
+          <div className="min-h-0 min-w-0 flex-1">
+            <Terminal
+              command="claude"
+              args={activeSession.args}
+              cwd={activeSession.project.path}
+              projectId={activeSession.project.id}
+              projectName={activeSession.project.name}
+              onSessionId={(sessionId) => {
+                setObservation(null);
+                setActivePtySessionId(sessionId);
+              }}
+            />
+          </div>
+          <Kanban status={observation?.status ?? "no-session-detected"} tasks={observation?.kanban ?? []} />
         </section>
       </main>
     );
@@ -182,6 +223,7 @@ export const App = (): JSX.Element => {
           setIntentProject(project);
           setView("intentLedger");
         }}
+        statusByProjectId={statusByProjectId}
       />
     </main>
   );

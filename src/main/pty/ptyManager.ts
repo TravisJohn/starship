@@ -15,8 +15,32 @@ type PtySession = {
   owner: WebContents;
 };
 
+export type PtySpawnInfo = {
+  sessionId: string;
+  command: string;
+  cwd: string;
+  projectId?: string;
+  projectName?: string;
+  spawnTimeMs: number;
+};
+
+type SpawnListener = (info: PtySpawnInfo) => void;
+type ExitListener = (sessionId: string) => void;
+
 export class PtyManager {
   private readonly sessions = new Map<string, PtySession>();
+  private readonly spawnListeners: SpawnListener[] = [];
+  private readonly exitListeners: ExitListener[] = [];
+
+  /** Notified whenever a pty is spawned - this is where session correlation hooks in (see src/main/observation/). */
+  onSpawn(listener: SpawnListener): void {
+    this.spawnListeners.push(listener);
+  }
+
+  /** Notified whenever a pty exits or is killed, so observers can tear down. */
+  onExit(listener: ExitListener): void {
+    this.exitListeners.push(listener);
+  }
 
   registerIpcHandlers(): void {
     ipcMain.handle("pty:spawn", (event, request: PtySpawnRequest) =>
@@ -84,7 +108,21 @@ export class PtyManager {
           signal
         });
       }
+      for (const listener of this.exitListeners) {
+        listener(request.sessionId);
+      }
     });
+
+    for (const listener of this.spawnListeners) {
+      listener({
+        sessionId: request.sessionId,
+        command: request.command,
+        cwd: request.cwd,
+        projectId: request.projectId,
+        projectName: request.projectName,
+        spawnTimeMs: Date.now()
+      });
+    }
 
     return {
       sessionId: request.sessionId

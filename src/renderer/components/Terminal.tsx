@@ -7,6 +7,11 @@ type TerminalProps = {
   command: string;
   args?: string[];
   cwd?: string;
+  /** Present when this terminal is launching `claude` against a known Starship project - lets the main process observe it (see src/main/observation/). */
+  projectId?: string;
+  projectName?: string;
+  /** Called once with the generated pty session id, so a parent can correlate incoming observation updates to this terminal. */
+  onSessionId?: (sessionId: string) => void;
 };
 
 type TerminalSize = {
@@ -19,10 +24,17 @@ const RESIZE_DEBOUNCE_MS = 90;
 export const Terminal = ({
   command,
   args = [],
-  cwd = ""
+  cwd = "",
+  projectId,
+  projectName,
+  onSessionId
 }: TerminalProps): JSX.Element => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const sessionId = useMemo(() => crypto.randomUUID(), []);
+
+  useEffect(() => {
+    onSessionId?.(sessionId);
+  }, [sessionId, onSessionId]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -122,7 +134,9 @@ export const Terminal = ({
           args,
           cwd,
           cols: initialSize.cols,
-          rows: initialSize.rows
+          rows: initialSize.rows,
+          projectId,
+          projectName
         })
         .then(() => {
           spawned = true;
@@ -142,7 +156,7 @@ export const Terminal = ({
       void window.starship.pty.kill({ sessionId });
       terminal.dispose();
     };
-  }, [args, command, cwd, sessionId]);
+  }, [args, command, cwd, sessionId, projectId, projectName]);
 
   return (
     <div className="h-full min-h-0 w-full overflow-hidden bg-slate-950">
