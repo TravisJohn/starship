@@ -127,3 +127,51 @@ Phase 1 scope: Electron shell, manual Project Shelf, embedded xterm.js terminal 
 - Ruled out hidden prompt injection: Launch starts Claude only; it does not send text to the TUI.
 - Ruled out Phase 2+ panes and state.
 - `~/.claude/projects` remains untouched by Starship code; any Claude state writes come from the real Claude Code process the user explicitly launches.
+
+## T6. Acceptance pass + go/no-go
+
+### Actions and reasoning
+- Added `scripts/acceptance-phase1.cjs`, a Playwright Core acceptance harness for the final Phase 1 judgement.
+- The harness uses the real app flow: add a temporary project through the Shelf, launch the real `claude` TUI through the embedded terminal, accept Claude's visible workspace trust prompt, send a printed multi-step coding task prompt, resize the Electron window mid-session, verify scrollback overflow, run an interrupt prompt, send Ctrl+C while long-running output is visible, confirm the TUI accepts input afterward, and exit Claude.
+- Acceptance artifacts are written to `acceptance-output/`, which is ignored so screenshots and logs do not become project state.
+
+### Decisions not explicit in the plan
+- The acceptance project lives under the OS temp directory and uses `STARSHIP_DB_PATH` so the test does not pollute the personal Starship shelf database.
+- The prompt asks Claude to create implementation and tests, run `npm test`, and emit 80 scroll markers. The markers are not product behavior; they make scrollback verification concrete under a long response.
+- The harness prints every prompt to its own log before sending it through xterm. This keeps the "no hidden prompt injection" principle true for the product while making the automated acceptance step auditable.
+- First acceptance run failed fast because the completion sentinel appeared in the echoed prompt, so the harness treated the prompt itself as completion and then failed the scrollback check. Updated the prompt wording so the exact final token and final scroll marker are not present in the typed prompt.
+- A short follow-up probe confirmed `keyboard.insertText` plus Enter does submit to Claude's TUI; Claude entered its thinking state. Added compact terminal-tail logging to the acceptance wait loop so long-running model/tool activity is distinguishable from a stuck permission prompt.
+- The tail logs from the next acceptance attempt showed the full prompt visible in Claude's input area after resize, so the send path was racing the long insert. A long-prompt probe confirmed adding a short settle delay before Enter submits reliably; updated `pasteAndEnter` accordingly.
+- The full acceptance prompt still remained visible after Enter in the real run, so the harness now uses a guarded Ctrl+Enter fallback only when the prompt text is still visible and Claude has not entered its interruptible/thinking state.
+- A real multi-step run completed through source/test creation and visible approvals, but the harness failed on an overly strict `_080` marker and a browser `scrollHeight` check that does not reflect Claude's alternate-screen TUI. Updated scrollback verification to combine marker search, row-span volume, and an actual mouse-wheel scroll attempt.
+- The saved scrollback screenshot showed the embedded TUI did scroll back through the overflowed Claude response, including edits, test output, and the implementation summary. Removed the artificial marker as a hard check and added Ctrl+U before later prompt sends so Claude suggestions or partial input do not contaminate the next acceptance prompt.
+
+### Deviations
+- None so far.
+
+### CLAUDE.md / PRD risk review
+- `~/.claude/projects` remains read-only from Starship. The real Claude Code process may write its own transcript there during the acceptance run; that is Claude's state, not Starship-derived state.
+- The harness intentionally exercises the ConPTY/TUI risk rather than bypassing it: keyboard input, Claude's trust TUI, tool confirmations, resize, scrollback, and Ctrl+C all pass through xterm and node-pty.
+
+### Final acceptance run
+- `npm run acceptance:phase1` completed successfully in the background run ending at `2026-07-12T08:19:29Z`; stderr was empty and no repo-owned Electron/Node acceptance processes remained afterward.
+- The run launched the built Electron app, added a temporary project with spaces in its path through the Shelf, launched real `claude` in the embedded terminal, accepted Claude's workspace trust prompt, and reached Claude Code's main TUI.
+- The acceptance task was a real multi-step Claude Code task, not a toy terminal smoke test. Claude inspected the temp project, created `src/wordStats.js`, created `test/wordStats.test.js`, updated `README.md`, ran `npm test`, and reported all 6 tests passing.
+- Manual-mode Claude confirmations appeared for shell/write actions and were accepted through the embedded TUI. This exercised real TUI selection/confirmation rendering rather than bypassing permissions.
+- The app resized smaller and then larger during the active Claude task. No visible corruption was logged or seen in the saved screenshots.
+- Colour/ANSI fidelity was acceptable for Phase 1: Claude's TUI, green diff blocks, status markers, and prompt chrome rendered correctly in screenshots. The automated DOM metric saw coloured spans during the run (`coloredSpanCount` 5-9 depending on screen).
+- Scrollback after overflow was verified by mouse wheel: the final run logged `wheelChanged=true` and saved `acceptance-output/phase1-scrollback.png`, which showed earlier overflowed content from the Claude response, including edited README content and test summary.
+- Ctrl+C was tested during a running command inside the Claude session. The harness prompted Claude to run `npm run slow`, waited until `STARSHIP_INTERRUPT_` output was visible, sent Ctrl+C, then sent a post-interrupt prompt. Claude accepted the follow-up prompt and `/exit` produced the terminal `[process exited]` marker.
+
+### Final risk review
+- ConPTY/TUI incompatibility: ruled out for Phase 1's required shell path. Claude's trust screen, main TUI, confirmations, tool output, long response, scrollback, resize, Ctrl+C, and exit all functioned inside xterm/node-pty.
+- ConPTY resize races: no corruption observed during two active-task resizes. The 90 ms debounce remains the right default for now.
+- ANSI/colour fidelity: acceptable with xterm's default renderer; no WebGL fallback needed in Phase 1.
+- Native rebuild: still a real setup risk. `better-sqlite3` rebuilds cleanly; `node-pty` rebuild fails on this machine because Spectre-mitigated VC libraries are missing. The Electron-compatible `node-pty` prebuild works, and postinstall verifies native module load as a fallback, but a clean developer setup should install the missing VC component or document the fallback clearly.
+- Alt-screen/mouse tracking: Claude appears to use TUI/alternate-screen behavior, so browser `scrollHeight` is not a reliable scrollback signal. Mouse-wheel scroll worked and screenshots show earlier overflowed content.
+- Bracketed paste/long input: long prompt entry required a guarded Ctrl+Enter fallback after Enter left the prompt visible. This is acceptable for acceptance automation and did not affect normal typed keys, but future prompt injection features must be tested carefully before Phase 2+.
+- `~/.claude/projects`: Starship code still does not write there. The only possible writes during T6 were Claude Code's own transcript/state writes from the explicitly launched real Claude process.
+
+### Go / no-go recommendation
+- **Go: proceed as embedded shell.** Phase 1's strategic question is answered: Claude Code's interactive TUI can live inside the Starship window well enough to continue the shell architecture.
+- Do **not** pivot to companion for Phase 2. Carry forward the native rebuild/toolchain risk and the long-input submit nuance, but neither invalidates the embedded-shell path.
