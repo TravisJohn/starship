@@ -280,8 +280,18 @@ export const MissionDashboard = ({
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
+                          disabled={project.lastActivityAt !== null}
+                          title={
+                            project.lastActivityAt !== null
+                              ? "Already started - Intent is only shown for projects that haven't been launched yet"
+                              : undefined
+                          }
                           onClick={() => onEditIntent(project)}
-                          className="h-8 rounded-md border border-zinc-700 px-3 text-xs font-medium text-zinc-100 hover:border-emerald-400 hover:text-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                          className={`h-8 rounded-md border px-3 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-emerald-300 ${
+                            project.lastActivityAt !== null
+                              ? "cursor-not-allowed border-zinc-800 text-zinc-500 opacity-60"
+                              : "border-zinc-700 text-zinc-100 hover:border-emerald-400 hover:text-emerald-200"
+                          }`}
                         >
                           Intent
                         </button>
