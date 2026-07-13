@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type {
+  AgentKind,
   MissionDashboardState,
   MissionProject,
   ObservationStatus,
@@ -9,7 +10,10 @@ import { ProjectSummaryOverlay } from "./ProjectSummaryOverlay";
 import { StatusDot } from "./StatusDot";
 
 type MissionDashboardProps = {
-  onLaunch: (project: Project) => void;
+  onLaunch: (
+    project: Project,
+    options: { agent: AgentKind; dangerouslySkipPermissions: boolean }
+  ) => void;
   onNewProject: (rootPath: string) => void;
   onEditIntent: (project: Project) => void;
   /** Live status for Starship-launched sessions in this app run. Rows with no live entry render idle. */
@@ -33,6 +37,12 @@ export const MissionDashboard = ({
   const [busyPath, setBusyPath] = useState<string | null>(null);
   const [showIgnored, setShowIgnored] = useState(false);
   const [summaryProject, setSummaryProject] = useState<MissionProject | null>(null);
+  const [agentByProjectId, setAgentByProjectId] = useState<Record<string, AgentKind>>(
+    {}
+  );
+  const [skipPermissionsByProjectId, setSkipPermissionsByProjectId] = useState<
+    Record<string, boolean>
+  >({});
 
   useEffect(() => {
     let cancelled = false;
@@ -109,12 +119,18 @@ export const MissionDashboard = ({
     }
   };
 
-  const launchProject = async (projectId: string): Promise<void> => {
+  const launchProject = async (missionProject: MissionProject): Promise<void> => {
     setError(null);
 
+    const agent = agentByProjectId[missionProject.id] ?? "claude";
+    const dangerouslySkipPermissions =
+      skipPermissionsByProjectId[missionProject.id] ?? false;
+
     try {
-      const { project } = await window.starship.dashboard.launch({ projectId });
-      onLaunch(project);
+      const { project } = await window.starship.dashboard.launch({
+        projectId: missionProject.id
+      });
+      onLaunch(project, { agent, dangerouslySkipPermissions });
     } catch (launchError: unknown) {
       setError(stringifyError(launchError));
     }
@@ -236,7 +252,7 @@ export const MissionDashboard = ({
                   <th className="w-28 border-b border-zinc-800 px-3 py-2 font-medium">
                     Ignore
                   </th>
-                  <th className="w-44 border-b border-zinc-800 px-3 py-2 font-medium">
+                  <th className="w-80 border-b border-zinc-800 px-3 py-2 font-medium">
                     Actions
                   </th>
                 </tr>
@@ -295,7 +311,39 @@ export const MissionDashboard = ({
                       </label>
                     </td>
                     <td className="border-b border-zinc-900 px-3 py-3">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <select
+                          value={agentByProjectId[project.id] ?? "claude"}
+                          onChange={(event) =>
+                            setAgentByProjectId((current) => ({
+                              ...current,
+                              [project.id]: event.target.value as AgentKind
+                            }))
+                          }
+                          className="h-8 rounded-md border border-zinc-700 bg-zinc-950 px-2 text-xs font-medium text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                        >
+                          <option value="claude">Claude</option>
+                          <option value="codex" disabled>
+                            Codex
+                          </option>
+                          <option value="antigravity" disabled>
+                            Antigravity
+                          </option>
+                        </select>
+                        <label className="inline-flex h-8 items-center gap-2 whitespace-nowrap text-xs text-zinc-300">
+                          <input
+                            type="checkbox"
+                            checked={skipPermissionsByProjectId[project.id] ?? false}
+                            onChange={(event) =>
+                              setSkipPermissionsByProjectId((current) => ({
+                                ...current,
+                                [project.id]: event.target.checked
+                              }))
+                            }
+                            className="h-4 w-4 rounded border-zinc-700 bg-zinc-900 text-emerald-500 focus:ring-emerald-300"
+                          />
+                          Skip permissions
+                        </label>
                         <button
                           type="button"
                           disabled={project.lastActivityAt !== null}
@@ -315,7 +363,7 @@ export const MissionDashboard = ({
                         </button>
                         <button
                           type="button"
-                          onClick={() => void launchProject(project.id)}
+                          onClick={() => void launchProject(project)}
                           className="h-8 rounded-md border border-zinc-700 px-3 text-xs font-medium text-zinc-100 hover:border-emerald-400 hover:text-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300"
                         >
                           Launch

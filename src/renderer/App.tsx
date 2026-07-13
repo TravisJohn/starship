@@ -28,6 +28,7 @@ type AppView =
 type ActiveSession = {
   project: Project;
   args: string[];
+  dangerouslySkipPermissions?: boolean;
 };
 
 export const App = (): JSX.Element => {
@@ -216,7 +217,15 @@ export const App = (): JSX.Element => {
   return (
     <main className="h-screen min-h-0 bg-zinc-950">
       <MissionDashboard
-        onLaunch={(project) => setActiveSession({ project, args: [] })}
+        onLaunch={(project, options) =>
+          setActiveSession({
+            project,
+            args: options.dangerouslySkipPermissions
+              ? ["--dangerously-skip-permissions"]
+              : [],
+            dangerouslySkipPermissions: options.dangerouslySkipPermissions
+          })
+        }
         onNewProject={(rootPath) => {
           setInceptionRootPath(rootPath);
           setView("inception");

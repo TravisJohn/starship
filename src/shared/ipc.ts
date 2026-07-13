@@ -1,5 +1,6 @@
 export type ProjectId = string;
 export type PtySessionId = string;
+export type AgentKind = "claude" | "codex" | "antigravity";
 
 export type Project = {
   id: ProjectId;
