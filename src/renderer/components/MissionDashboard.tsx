@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type {
   AgentKind,
+  ActivityAppendRequest,
   MissionDashboardState,
   MissionProject,
   ObservationStatus,
@@ -75,6 +76,12 @@ export const MissionDashboard = ({
     const state = await window.starship.dashboard.locateRoot();
     if (state) {
       applyDashboardState(state, setDashboard, setError);
+      if (state.rootPath) {
+        appendActivity({
+          eventType: "root_located",
+          detail: { rootPath: state.rootPath }
+        });
+      }
     }
   };
 
@@ -106,6 +113,11 @@ export const MissionDashboard = ({
           item.path === updated.path ? updated : item
         )
       }));
+      appendActivity({
+        eventType: "project_ignored",
+        projectId: updated.id,
+        detail: { ignored: updated.ignored }
+      });
     } catch (toggleError: unknown) {
       setDashboard((current) => ({
         ...current,
@@ -130,10 +142,49 @@ export const MissionDashboard = ({
       const { project } = await window.starship.dashboard.launch({
         projectId: missionProject.id
       });
+      appendActivity({
+        eventType: "launch_fired",
+        projectId: missionProject.id,
+        detail: { agent, dangerouslySkipPermissions }
+      });
       onLaunch(project, { agent, dangerouslySkipPermissions });
     } catch (launchError: unknown) {
       setError(stringifyError(launchError));
     }
+  };
+
+  const openIntent = (project: MissionProject): void => {
+    appendActivity({ eventType: "intent_opened", projectId: project.id });
+    onEditIntent(project);
+  };
+
+  const openSummary = (project: MissionProject): void => {
+    appendActivity({ eventType: "summary_overlay_opened", projectId: project.id });
+    setSummaryProject(project);
+  };
+
+  const selectAgent = (projectId: string, agent: AgentKind): void => {
+    setAgentByProjectId((current) => ({
+      ...current,
+      [projectId]: agent
+    }));
+    appendActivity({
+      eventType: "agent_selected",
+      projectId,
+      detail: { agent }
+    });
+  };
+
+  const setSkipPermissions = (projectId: string, enabled: boolean): void => {
+    setSkipPermissionsByProjectId((current) => ({
+      ...current,
+      [projectId]: enabled
+    }));
+    appendActivity({
+      eventType: "skip_permissions_toggled",
+      projectId,
+      detail: { enabled }
+    });
   };
 
   if (loading) {
@@ -273,11 +324,11 @@ export const MissionDashboard = ({
                           <p
                             role="button"
                             tabIndex={0}
-                            onClick={() => setSummaryProject(project)}
+                            onClick={() => openSummary(project)}
                             onKeyDown={(event) => {
                               if (event.key === "Enter" || event.key === " ") {
                                 event.preventDefault();
-                                setSummaryProject(project);
+                                openSummary(project);
                               }
                             }}
                             className="mt-1 cursor-pointer truncate text-xs text-emerald-200 hover:text-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-300"
@@ -315,10 +366,7 @@ export const MissionDashboard = ({
                         <select
                           value={agentByProjectId[project.id] ?? "claude"}
                           onChange={(event) =>
-                            setAgentByProjectId((current) => ({
-                              ...current,
-                              [project.id]: event.target.value as AgentKind
-                            }))
+                            selectAgent(project.id, event.target.value as AgentKind)
                           }
                           className="h-8 rounded-md border border-zinc-700 bg-zinc-950 px-2 text-xs font-medium text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-300"
                         >
@@ -335,10 +383,7 @@ export const MissionDashboard = ({
                             type="checkbox"
                             checked={skipPermissionsByProjectId[project.id] ?? false}
                             onChange={(event) =>
-                              setSkipPermissionsByProjectId((current) => ({
-                                ...current,
-                                [project.id]: event.target.checked
-                              }))
+                              setSkipPermissions(project.id, event.target.checked)
                             }
                             className="h-4 w-4 rounded border-zinc-700 bg-zinc-900 text-emerald-500 focus:ring-emerald-300"
                           />
@@ -352,7 +397,7 @@ export const MissionDashboard = ({
                               ? "Already started - Intent is only shown for projects that haven't been launched yet"
                               : undefined
                           }
-                          onClick={() => onEditIntent(project)}
+                          onClick={() => openIntent(project)}
                           className={`h-8 rounded-md border px-3 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-emerald-300 ${
                             project.lastActivityAt !== null
                               ? "cursor-not-allowed border-zinc-800 text-zinc-500 opacity-60"
@@ -412,3 +457,7 @@ const formatLastActivity = (lastActivityAt: string | null): string => {
 
 const stringifyError = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
+
+const appendActivity = (request: ActivityAppendRequest): void => {
+  void window.starship.activity.append(request).catch(() => undefined);
+};

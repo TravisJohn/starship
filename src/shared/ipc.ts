@@ -158,6 +158,25 @@ export type DashboardLaunchResponse = {
   project: Project;
 };
 
+export type ActivityLogEntry = {
+  id: number;
+  ts: string;
+  eventType: string;
+  projectId: string | null;
+  detail: unknown;
+};
+
+export type ActivityAppendRequest = {
+  eventType: string;
+  projectId?: string;
+  detail?: unknown;
+};
+
+export type ActivityListRequest = {
+  projectId?: string;
+  limit?: number;
+};
+
 export type ObservationStatus = "no-session-detected" | "idle" | "building" | "decision-needed";
 
 export type ObservationDecision = {
@@ -227,6 +246,14 @@ export type RendererToMainInvokeMap = {
     request: DashboardLaunchRequest;
     response: DashboardLaunchResponse;
   };
+  "activity:append": {
+    request: ActivityAppendRequest;
+    response: ActivityLogEntry;
+  };
+  "activity:list": {
+    request: ActivityListRequest;
+    response: ActivityLogEntry[];
+  };
   "intent:getLedger": {
     request: IntentLedgerRequest;
     response: IntentLedger | null;
@@ -253,6 +280,7 @@ export type MainToRendererEventMap = {
   "pty:data": PtyDataEvent;
   "pty:exit": PtyExitEvent;
   "observation:snapshot": ObservationSnapshot;
+  "activity:appended": ActivityLogEntry;
 };
 
 export type IpcInvokeChannel = keyof RendererToMainInvokeMap;
@@ -299,5 +327,10 @@ export type StarshipApi = {
   };
   observation: {
     onSnapshot: (handler: (snapshot: ObservationSnapshot) => void) => Unsubscribe;
+  };
+  activity: {
+    append: (request: ActivityAppendRequest) => Promise<ActivityLogEntry>;
+    list: (request: ActivityListRequest) => Promise<ActivityLogEntry[]>;
+    onAppended: (handler: (entry: ActivityLogEntry) => void) => Unsubscribe;
   };
 };

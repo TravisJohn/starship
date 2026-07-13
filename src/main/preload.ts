@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import type {
+  ActivityLogEntry,
   ObservationSnapshot,
   PtyDataEvent,
   PtyExitEvent,
@@ -58,6 +59,19 @@ const api: StarshipApi = {
       ipcRenderer.on("observation:snapshot", listener);
       return () => {
         ipcRenderer.off("observation:snapshot", listener);
+      };
+    }
+  },
+  activity: {
+    append: (request) => ipcRenderer.invoke("activity:append", request),
+    list: (request) => ipcRenderer.invoke("activity:list", request),
+    onAppended: (handler) => {
+      const listener = (_event: IpcRendererEvent, payload: ActivityLogEntry): void => {
+        handler(payload);
+      };
+      ipcRenderer.on("activity:appended", listener);
+      return () => {
+        ipcRenderer.off("activity:appended", listener);
       };
     }
   }

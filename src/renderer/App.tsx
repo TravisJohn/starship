@@ -7,6 +7,7 @@ import type {
   ObservationStatus,
   Project
 } from "../shared/ipc";
+import { ActivityLog } from "./components/ActivityLog";
 import { ColdPromptReview } from "./components/ColdPromptReview";
 import { Inception } from "./components/Inception";
 import { InceptionReview } from "./components/InceptionReview";
@@ -129,6 +130,7 @@ export const App = (): JSX.Element => {
             Dashboard
           </button>
         </header>
+        <ActivityLog projectId={activeSession.project.id} />
         <SubagentStrip agents={observation?.subagents ?? []} />
         <section className="flex min-h-0 min-w-0 flex-1">
           <div className="min-h-0 min-w-0 flex-1">

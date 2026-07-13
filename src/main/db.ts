@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type {
+  ActivityLogEntry,
   IntentLedger,
   IntentLedgerInput,
   Project,
@@ -38,6 +39,14 @@ type RootSettingsRow = {
 type IgnoredProjectPathRow = {
   path: string;
   ignored: number;
+};
+
+type ActivityLogRow = {
+  id: number;
+  ts: string;
+  event_type: string;
+  project_id: string | null;
+  detail: string | null;
 };
 
 export class StarshipDb {
@@ -82,6 +91,14 @@ export class StarshipDb {
         path text primary key,
         ignored integer not null check (ignored in (0, 1)),
         updated_at text not null
+      );
+
+      create table if not exists activity_log (
+        id integer primary key autoincrement,
+        ts text not null,
+        event_type text not null,
+        project_id text,
+        detail text
       );
     `);
   }
@@ -287,6 +304,60 @@ export class StarshipDb {
       .run(cacheKey, result, new Date().toISOString());
   }
 
+  logActivity(entry: {
+    eventType: string;
+    projectId?: string | null;
+    detail?: unknown;
+  }): ActivityLogEntry {
+    const ts = new Date().toISOString();
+    const detail = entry.detail === undefined ? null : JSON.stringify(entry.detail);
+    const result = this.db
+      .prepare(
+        `insert into activity_log (ts, event_type, project_id, detail)
+         values (?, ?, ?, ?)`
+      )
+      .run(ts, entry.eventType, entry.projectId ?? null, detail);
+
+    const row = this.db
+      .prepare(
+        `select id, ts, event_type, project_id, detail
+         from activity_log
+         where id = ?`
+      )
+      .get(result.lastInsertRowid) as ActivityLogRow | undefined;
+
+    if (!row) {
+      throw new Error("Activity log insert failed");
+    }
+
+    return rowToActivityLogEntry(row);
+  }
+
+  listActivity(options: { projectId?: string; limit?: number } = {}): ActivityLogEntry[] {
+    const limit = normalizeActivityLimit(options.limit);
+    const rows =
+      options.projectId === undefined
+        ? (this.db
+            .prepare(
+              `select id, ts, event_type, project_id, detail
+               from activity_log
+               order by id asc
+               limit ?`
+            )
+            .all(limit) as ActivityLogRow[])
+        : (this.db
+            .prepare(
+              `select id, ts, event_type, project_id, detail
+               from activity_log
+               where project_id = ? or project_id is null
+               order by id asc
+               limit ?`
+            )
+            .all(options.projectId, limit) as ActivityLogRow[]);
+
+    return rows.map(rowToActivityLogEntry);
+  }
+
   close(): void {
     this.db.close();
   }
@@ -328,3 +399,19 @@ const rowToIntentLedger = (row: IntentLedgerRow): IntentLedger => ({
   createdAt: row.created_at,
   updatedAt: row.updated_at
 });
+
+const rowToActivityLogEntry = (row: ActivityLogRow): ActivityLogEntry => ({
+  id: row.id,
+  ts: row.ts,
+  eventType: row.event_type,
+  projectId: row.project_id,
+  detail: row.detail === null ? null : JSON.parse(row.detail)
+});
+
+const normalizeActivityLimit = (limit: number | undefined): number => {
+  if (limit === undefined || !Number.isFinite(limit)) {
+    return 500;
+  }
+
+  return Math.max(1, Math.min(5000, Math.trunc(limit)));
+};
