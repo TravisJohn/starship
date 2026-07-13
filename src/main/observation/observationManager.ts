@@ -2,6 +2,7 @@ import { Notification } from "electron";
 import type { ObservationSnapshot, ProjectId, PtySessionId } from "../../shared/ipc";
 import { correlateSession } from "./correlate";
 import { KanbanReducer } from "./kanban";
+import { tailPermissionSignal } from "./permissionSignal";
 import { StatusEngine, type EngineStatus } from "./statusEngine";
 import { SubagentReducer } from "./subagents";
 import { tailSession } from "./tailer";
@@ -22,6 +23,7 @@ type ObservedSession = {
   lastEngineStatus: EngineStatus | null;
   unsubscribeCorrelate: () => void;
   unsubscribeTail?: () => void;
+  unsubscribePermissionSignal?: () => void;
   pollTimer?: ReturnType<typeof setInterval>;
 };
 
@@ -95,6 +97,17 @@ export class ObservationManager {
           session.status.handleRecord(record);
           emit();
         });
+        // The one signal the transcript structurally cannot provide in time
+        // (see PHASE3_LOG.md "New finding"): Claude Code doesn't write a
+        // tool_use record for a pending-approval call until after the human
+        // answers it, so a real approval prompt is otherwise invisible for
+        // its entire pending duration. Keyed by project path, not the
+        // transcript, so it works the same way regardless of which session
+        // file ends up correlated.
+        session.unsubscribePermissionSignal = tailPermissionSignal(request.projectPath, (signal) => {
+          session.status.handlePermissionSignal(signal);
+          emit();
+        });
         session.pollTimer = setInterval(emit, STATUS_POLL_INTERVAL_MS);
         emit();
       }
@@ -112,6 +125,7 @@ export class ObservationManager {
 
     session.unsubscribeCorrelate();
     session.unsubscribeTail?.();
+    session.unsubscribePermissionSignal?.();
     if (session.pollTimer) {
       clearInterval(session.pollTimer);
     }

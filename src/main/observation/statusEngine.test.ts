@@ -113,6 +113,37 @@ describe("StatusEngine", () => {
     clock.advance(60_000); // a slow approved call, e.g. long test suite via an allow-listed tool
     expect(engine.computeStatus(clock.now())).toEqual({ status: "building" });
   });
+
+  it("treats a permission-signal hook firing as decision-needed immediately, no grace period", () => {
+    const engine = new StatusEngine();
+    engine.handlePermissionSignal({ toolName: "Bash", toolInput: { command: "dir" } });
+
+    expect(engine.computeStatus(0)).toEqual({
+      status: "decision-needed",
+      decision: { toolName: "Bash", summary: "run: dir" }
+    });
+  });
+
+  it("clears a pending permission signal once any transcript activity arrives", () => {
+    const engine = new StatusEngine();
+    engine.handlePermissionSignal({ toolName: "Write", toolInput: { file_path: "scratch.txt" } });
+    expect(engine.computeStatus(0).status).toBe("decision-needed");
+
+    engine.handleRecord({ kind: "turn-ended", timestamp: null });
+    expect(engine.computeStatus(0)).toEqual({ status: "idle" });
+  });
+
+  it("prioritizes a permission-signal hook over a merely-pending, not-yet-classified tool call", () => {
+    const clock = makeClock();
+    const engine = new StatusEngine({ clockNowMs: clock.now, gracePeriodMs: 1500 });
+    engine.handleRecord({ kind: "tool-use", toolUseId: "t1", toolName: "Read", input: {}, timestamp: null });
+    engine.handlePermissionSignal({ toolName: "Bash", toolInput: { command: "dir" } });
+
+    expect(engine.computeStatus(clock.now())).toEqual({
+      status: "decision-needed",
+      decision: { toolName: "Bash", summary: "run: dir" }
+    });
+  });
 });
 
 describe("summarizeToolInput", () => {

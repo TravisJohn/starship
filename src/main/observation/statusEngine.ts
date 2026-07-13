@@ -126,6 +126,19 @@ type PendingToolUse = {
   firstSeenAtMs: number;
 };
 
+/**
+ * One `PermissionRequest` hook firing (see permissionSignal.ts): Claude Code
+ * is showing a real approval prompt for this tool right now, before the
+ * human has answered it. Unlike a `PendingToolUse`, this needs no grace
+ * period and no auto-approval classification - the hook only ever fires
+ * when Claude Code itself has already decided a real prompt is required, so
+ * there's no ambiguity to wait out.
+ */
+export type PermissionSignal = {
+  toolName: string;
+  toolInput: unknown;
+};
+
 export type StatusEngineOptions = {
   isAutoApproved?: IsAutoApproved;
   /** Delay before an unapproved-looking tool call is treated as decision-needed, to avoid a flash on trivially-fast calls. */
@@ -142,10 +155,18 @@ export type StatusEngineOptions = {
  * resolved by classification (see defaultIsAutoApproved), not by waiting
  * longer: a legitimately slow approved tool (e.g. a test suite) must not
  * flip to decision-needed just because it's taking a while.
+ *
+ * That classification heuristic is a fallback, not the primary signal - it
+ * exists for approvals the hook-based signal below cannot cover for any
+ * reason (hook script failure, older projects created before the hook
+ * existed). The `PermissionRequest` hook signal fed via
+ * `handlePermissionSignal` is confirmed-real, not guessed, and takes
+ * priority whenever present.
  */
 export class StatusEngine {
   private readonly pending = new Map<string, PendingToolUse>();
   private permissionMode: string | null = null;
+  private hookPendingSignal: PermissionSignal | null = null;
   private readonly isAutoApproved: IsAutoApproved;
   private readonly gracePeriodMs: number;
   private readonly clockNowMs: () => number;
@@ -157,6 +178,14 @@ export class StatusEngine {
   }
 
   handleRecord(record: ParsedRecord): void {
+    // Any transcript activity at all proves a previously-signaled pending
+    // approval was already answered: Claude Code is fully blocked, waiting
+    // synchronously on the hook and then on the human, so nothing else can
+    // reach the transcript in between. Safer than trying to match this
+    // record back to the specific approval (the hook payload has no
+    // tool_use_id yet - that's assigned only once the record is written).
+    this.hookPendingSignal = null;
+
     if (record.kind === "tool-use") {
       this.pending.set(record.toolUseId, {
         toolUseId: record.toolUseId,
@@ -177,7 +206,20 @@ export class StatusEngine {
     }
   }
 
+  /** Fed from the permission-signal file tail - see permissionSignal.ts. */
+  handlePermissionSignal(signal: PermissionSignal): void {
+    this.hookPendingSignal = signal;
+  }
+
   computeStatus(nowMs: number = this.clockNowMs()): StatusResult {
+    if (this.hookPendingSignal) {
+      const { toolName, toolInput } = this.hookPendingSignal;
+      return {
+        status: "decision-needed",
+        decision: { toolName, summary: summarizeToolInput(toolName, toolInput) }
+      };
+    }
+
     for (const use of this.pending.values()) {
       if (INTERACTIVE_TOOLS.has(use.toolName)) {
         return {

@@ -241,6 +241,74 @@ non-deterministic per-tool-call in this Claude Code version — a bare `dir` som
 real approval prompt and sometimes ran immediately with no prompt at all, across otherwise
 identical test setups. Not yet understood; noted as a risk for any future design here.
 
+### Resolved: PermissionRequest hooks (2026-07-13, same-day follow-up)
+Researched Claude Code's own hooks documentation (via the claude-code-guide agent, not
+assumption) before designing anything, since acting on stale/half-remembered hook semantics would
+have been exactly the kind of unverified claim CLAUDE.md's memory-verification discipline warns
+against. Found the right tool for this: `PermissionRequest` fires synchronously, exactly when
+Claude Code is about to show a real approval dialog and before the human answers it — unlike
+`PreToolUse` (fires for every tool call, approval-needed or not) and `Notification` (fires after
+the dialog is already showing, non-blocking). The hook payload includes `tool_name` and
+`tool_input`, enough to reuse `summarizeToolInput` unchanged.
+
+**What shipped:**
+- `templates/permission-hook.cjs` — a static, dependency-free Node script copied verbatim into
+  every new project's `.starship/` at creation (`createProject.ts`). Reads the hook's JSON payload
+  from stdin, appends one line to a per-project signal file, and always exits 0 without returning
+  an allow/deny decision — it only ever observes. A failure here (bad JSON, no write access) is
+  swallowed rather than blocking or altering Claude Code's own permission flow.
+- `.claude/settings.json` (project-local, committed alongside `PRD.md`/`CLAUDE.md`/the hook
+  script, not `~/.claude/`) registers the hook — visible and inspectable, not a hidden side
+  effect, per CLAUDE.md's transparency principle.
+- `src/main/observation/permissionSignal.ts` (new) — resolves the signal file path (same slug
+  function `correlate.ts` uses, keyed by project path so it doesn't depend on which transcript
+  ends up correlated) and tails it. Two correctness points worth remembering if this gets touched
+  again:
+  - The file persists across every session ever launched for a project, so a naive "read
+    everything on attach" (`tailSession`'s existing behavior) would replay **stale signals from
+    past, already-resolved sessions** as pending right now. Fixed by skipping straight to the
+    file's current end if it already exists when observation starts, only reporting genuinely new
+    appends from there.
+  - Chokidar cannot reliably watch a single *non-existent file path* directly and detect its
+    later creation — only a directory for new entries appearing inside it (the same constraint
+    `correlate.ts` already works around for the transcript root). If the signal file doesn't
+    exist yet, watch its parent directory instead, and the directory itself is proactively
+    created if missing so chokidar is never asked to watch a non-existent path either.
+- `src/main/observation/tailer.ts` refactored to expose the shared byte-offset incremental-read
+  primitive (`tailFile`) behind both `tailSession` and the new permission-signal tailer, now with
+  an optional starting-offset parameter for the "skip stale content" case above.
+- `statusEngine.ts`: a hook-sourced `PermissionSignal` takes priority over the existing
+  pending-tool-map heuristic and needs no grace period (the hook only fires when Claude Code
+  itself has already decided a real prompt is required, so there's no ambiguity to wait out,
+  unlike the classification heuristic which remains as a fallback for approvals the hook can't
+  cover — e.g. projects created before this existed). Cleared on any subsequent transcript
+  activity, which is provably safe: Claude Code is fully blocked synchronously on the hook and
+  then on the human, so nothing else can reach the transcript before the decision is made.
+- `observationManager.ts` wires `tailPermissionSignal` alongside the existing transcript tail,
+  started at the same point (once correlation resolves), feeding into the same `emit()`/
+  notification path untouched.
+
+**Live-verified end-to-end**, not just unit-tested: created a real project through the actual
+`createInceptionProject` code path (hook + settings.json present and git-committed alongside
+`PRD.md`/`CLAUDE.md`), launched real `claude` in it, and prompted a `Write` call under default
+(non-bypassed) permissions. Confirmed via direct source-level logging (a monkeypatched
+`Notification` class didn't intercept the call for an unrelated harness reason, so the log is the
+real evidence here): `notifyDecisionNeeded` fired with `write to <path>\scratch.txt` — the exact
+altitude-correct summary, sourced entirely from the hook — while the terminal was still visibly
+showing `Do you want to create scratch.txt?` unanswered. Also confirmed: the signal file rejects
+stale content correctly (re-running against the same project without a fresh approval produced no
+notification, as expected since nothing needed approval that time), and the decision-needed status
+clears correctly once the human answers. `npm run test` green throughout (83/83, up from 73 with
+new coverage for `permissionSignal.ts` and the `StatusEngine` hook-signal path).
+
+**Scope**: new projects only, via Inception — matches the same rollout choice already made for the
+task-tracking CLAUDE.md directive. Existing projects (trAvIs, etc.) won't get the notification
+capability until/unless retrofitted.
+
+**Phase 3's original acceptance bar is now fully met**: kanban-lag (fixed earlier today) and
+decision-needed notification (this) both confirmed working live against a real Claude Code
+session. A go/no-go can now honestly be called **Go** for Phase 3's observation layer.
+
 ### Confirmed acceptance (2026-07-13)
 - **Root discovery persistence**: Travis confirmed end-to-end — locating a root, closing the app,
   and reopening it remembers the root path (`db.getRootPath()`/`setRootPath()` round-trip via

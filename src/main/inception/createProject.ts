@@ -1,3 +1,4 @@
+import { app } from "electron";
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -24,6 +25,8 @@ export const createInceptionProject = async (
   fs.mkdirSync(projectPath, { recursive: true });
   fs.writeFileSync(path.join(projectPath, "PRD.md"), request.prd, "utf8");
   fs.writeFileSync(path.join(projectPath, "CLAUDE.md"), request.claude, "utf8");
+  writePermissionHook(projectPath);
+  writeClaudeSettings(projectPath);
 
   await initializeGitRepository(projectPath);
 
@@ -75,9 +78,60 @@ const ensureCreatableProjectDirectory = (projectPath: string): void => {
   }
 };
 
+/**
+ * Copies the static hook script that reports pending Claude Code approval
+ * prompts back to Starship (see permissionSignal.ts / statusEngine.ts for
+ * the observation side). Not templated/interview-driven - copied verbatim,
+ * same as any other fixed asset.
+ */
+const writePermissionHook = (projectPath: string): void => {
+  const templateDir = process.env.STARSHIP_TEMPLATE_DIR ?? path.join(getAppRoot(), "templates");
+  const source = path.join(templateDir, "permission-hook.cjs");
+  const hookDir = path.join(projectPath, ".starship");
+  fs.mkdirSync(hookDir, { recursive: true });
+  fs.copyFileSync(source, path.join(hookDir, "permission-hook.cjs"));
+};
+
+/**
+ * Registers the hook against Claude Code's PermissionRequest event. Written
+ * to the project's own `.claude/settings.json` (not `~/.claude/`) so it's
+ * visible, inspectable, and committed with the project rather than a hidden
+ * side effect - the same transparency principle as showing every injected
+ * prompt before firing.
+ */
+const writeClaudeSettings = (projectPath: string): void => {
+  const claudeDir = path.join(projectPath, ".claude");
+  fs.mkdirSync(claudeDir, { recursive: true });
+
+  const settings = {
+    hooks: {
+      PermissionRequest: [
+        {
+          matcher: "",
+          hooks: [
+            {
+              type: "command",
+              command: "node ${CLAUDE_PROJECT_DIR}/.starship/permission-hook.cjs"
+            }
+          ]
+        }
+      ]
+    }
+  };
+
+  fs.writeFileSync(
+    path.join(claudeDir, "settings.json"),
+    `${JSON.stringify(settings, null, 2)}\n`,
+    "utf8"
+  );
+};
+
 const initializeGitRepository = async (projectPath: string): Promise<void> => {
   await runGit(["init"], projectPath);
-  await runGit(["add", "PRD.md", "CLAUDE.md"], projectPath);
+  await runGit(
+    ["add", "PRD.md", "CLAUDE.md", ".starship/permission-hook.cjs", ".claude/settings.json"],
+    projectPath
+  );
   await runGit(
     [
       "-c",
@@ -123,6 +177,14 @@ const resolveGitCommand = (): string => {
   }
 
   return "git";
+};
+
+const getAppRoot = (): string => {
+  if (app && typeof app.getAppPath === "function") {
+    return app.getAppPath();
+  }
+
+  return process.cwd();
 };
 
 const sanitizeFolderName = (projectName: string): string =>
