@@ -7,6 +7,7 @@
 2. **Phase discipline.** Build only the current phase (PRD §9). Each phase answers a named strategic question — stop at its acceptance criteria and report against that question. Never scaffold ahead.
 3. **Present the plan before code.** For each phase, present discrete tasks with dependencies and wait for approval. Flag the phase's biggest technical risk explicitly in the plan.
 4. **Commit at each working checkpoint** with conventional commits (`feat:`, `fix:`, `chore:`).
+5. **Track work as tasks.** Use your task-tracking tool for any multi-step or non-trivial work — create a task per discrete step and update its status as you go, even for work you'd otherwise just do inline. This is how the builder's dashboard sees what's happening.
 
 ## Stack (fixed — do not substitute)
 {{stack_details}}
