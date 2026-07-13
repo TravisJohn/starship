@@ -4,8 +4,10 @@ import { registerActivityHandlers } from "./activity";
 import { registerBriefingHandlers } from "./briefing";
 import { registerDashboardHandlers } from "./dashboard";
 import { createStarshipDb, registerIntentHandlers, type StarshipDb } from "./db";
+import { registerFileMapHandlers } from "./fileMap";
 import { registerInceptionHandlers } from "./inception";
 import { ObservationManager } from "./observation/observationManager";
+import { registerProjectLogBriefingHandlers } from "./projectLogBriefing";
 import { PtyManager } from "./pty/ptyManager";
 
 let mainWindow: BrowserWindow | null = null;
@@ -70,8 +72,10 @@ app.whenReady().then(() => {
   registerActivityHandlers(db, () => mainWindow);
   registerBriefingHandlers(db);
   registerDashboardHandlers(db);
+  registerFileMapHandlers(db);
   registerIntentHandlers(db);
   registerInceptionHandlers(db);
+  registerProjectLogBriefingHandlers(db);
   ptyManager.registerIpcHandlers();
   createMainWindow();
 

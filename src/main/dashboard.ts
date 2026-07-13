@@ -10,6 +10,7 @@ import type {
   MissionProject,
   PrdPhase,
   Project,
+  ProjectLogEntry,
   ProjectPhasesRequest
 } from "../shared/ipc";
 import type { StarshipDb } from "./db";
@@ -115,7 +116,8 @@ const decorateProjects = (db: StarshipDb, projects: Project[]): MissionProject[]
     ...project,
     ignored: ignoredByPath.get(project.path) ?? false,
     lastActivityAt: readLastClaudeActivityAt(project.path),
-    prdSummary: readPrdSummary(project.path)
+    prdSummary: readPrdSummary(project.path),
+    projectLogEntry: findLatestProjectLogEntry(project.path)
   }));
 };
 
@@ -129,15 +131,21 @@ const decorateProjects = (db: StarshipDb, projects: Project[]): MissionProject[]
 export const findNewestTranscript = (
   projectPath: string
 ): { path: string; mtimeMs: number } | null => {
+  return findAllTranscriptsForProject(projectPath).at(-1) ?? null;
+};
+
+export const findAllTranscriptsForProject = (
+  projectPath: string
+): { path: string; mtimeMs: number }[] => {
   const projectDir = resolveClaudeProjectDir(projectPath, CLAUDE_PROJECTS_ROOT);
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(projectDir, { withFileTypes: true });
   } catch {
-    return null;
+    return [];
   }
 
-  let newest: { path: string; mtimeMs: number } | null = null;
+  const transcripts: { path: string; mtimeMs: number }[] = [];
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.endsWith(".jsonl")) {
       continue;
@@ -155,12 +163,10 @@ export const findNewestTranscript = (
       continue;
     }
 
-    if (!newest || stat.mtimeMs > newest.mtimeMs) {
-      newest = { path: transcriptPath, mtimeMs: stat.mtimeMs };
-    }
+    transcripts.push({ path: transcriptPath, mtimeMs: stat.mtimeMs });
   }
 
-  return newest;
+  return transcripts.sort((a, b) => a.mtimeMs - b.mtimeMs);
 };
 
 const readLastClaudeActivityAt = (projectPath: string): string | null => {
@@ -268,6 +274,89 @@ export const readPrdPhases = (projectPath: string): PrdPhase[] => {
   flush();
 
   return phases;
+};
+
+export const findLatestProjectLogEntry = (
+  projectPath: string
+): ProjectLogEntry | null => {
+  let content: string;
+  try {
+    content = fs.readFileSync(path.join(projectPath, "PROJECT_LOG.md"), "utf8");
+  } catch {
+    return null;
+  }
+
+  if (content.trim().length === 0) {
+    return null;
+  }
+
+  const lines = content.split(/\r?\n/);
+  const headings: { date: string; title: string; lineIndex: number }[] = [];
+
+  for (const [lineIndex, line] of lines.entries()) {
+    const match = line.match(/^##\s+(\d{4}-\d{2}-\d{2})/);
+    if (!match) {
+      continue;
+    }
+
+    headings.push({
+      date: match[1],
+      title: line.replace(/^##\s+/, "").trim(),
+      lineIndex
+    });
+  }
+
+  if (headings.length === 0) {
+    return null;
+  }
+
+  // A single productive day commonly produces several same-dated entries -
+  // both real examples this was built against turned out to be single-date
+  // logs (TicTacToe: all four entries on one day; Huddle: all seven). ISO
+  // date strings alone can't break that tie, and which position ("first in
+  // file" or "last in file") is actually the more recent entry depends
+  // entirely on the log's own convention (chronological vs "newest at the
+  // top"). Two signals, in order:
+  //  1. If the file has 2+ *distinct* dates, compare the first and last
+  //     dated heading found - reliable regardless of any single-date runs
+  //     elsewhere in the file.
+  //  2. Otherwise (every heading shares one date, so signal 1 is a no-op),
+  //     fall back to an explicit convention statement some logs include as
+  //     a preamble before the first heading (Huddle literally says "Newest
+  //     entries at the top."). Absence of such a statement defaults to
+  //     chronological (oldest-first), matching TicTacToe's real log, which
+  //     states no convention at all.
+  const distinctDates = new Set(headings.map((heading) => heading.date));
+  const isReverseChronological =
+    distinctDates.size > 1
+      ? headings[0].date > headings[headings.length - 1].date
+      : /newest[^.\n]{0,40}top/i.test(lines.slice(0, headings[0].lineIndex).join("\n"));
+
+  const maxDate = headings.reduce(
+    (max, heading) => (heading.date > max ? heading.date : max),
+    headings[0].date
+  );
+  const candidates = headings.filter((heading) => heading.date === maxDate);
+  const latest = isReverseChronological ? candidates[0] : candidates[candidates.length - 1];
+
+  const bodyLines: string[] = [];
+  for (const line of lines.slice(latest.lineIndex + 1)) {
+    const headingMatch = line.match(/^(#+)\s/);
+    if (headingMatch && headingMatch[1].length <= 2) {
+      break;
+    }
+
+    const trimmed = line.trim();
+    if (trimmed.length > 0) {
+      bodyLines.push(trimmed);
+    }
+  }
+
+  return {
+    date: latest.date,
+    title: latest.title,
+    body: bodyLines.join(" ").replace(/\s+/g, " ").trim()
+  };
 };
 
 const transcriptBelongsToProject = (

@@ -79,9 +79,109 @@ written before either of these existed).
   named, later PRD scope, not attempted here.
 - **Roadmap strip has no completion signal at all**, by design (see above) — it is pure reference
   context, not a progress tracker.
-- The DAG itself (plan → graph, Intent Ledger annotation, task drill-in) is **not started**. Real
-  transcript data exists to build it from — TicTacToe's second session used real `TaskUpdate
-  addBlockedBy` dependency edges between tasks, not just flat sequential completion — but nothing
-  in Starship parses that field yet (`taskShape.ts`'s `interpretTaskUpdateInput` currently
-  discards any `TaskUpdate` call that isn't a `{taskId, status}` pair). This is the next real
-  conversation.
+- The task-plan DAG described above (plan → graph, Intent Ledger annotation, task drill-in) was
+  **discussed but deliberately not built** — see below for what replaced it.
+
+## File Map — the DAG idea, redesigned (2026-07-13, same-day follow-up)
+
+Discussing the DAG surfaced a real design fork. Initial framing followed the PRD closely: a
+task/plan graph built from `TaskCreate`/`TaskUpdate` (including the real `addBlockedBy` dependency
+edges found in TicTacToe's second session), annotated against the Intent Ledger, shown as a
+toggleable alternative to the Terminal view. Two honest problems with that framing, worked through
+in conversation rather than discovered after building:
+
+1. **Structure is often absent, and that's not a defect.** TicTacToe's *first* session had zero
+   dependency edges — a flat, correctly-sequential list. Engineering the DAG to look richer than
+   the actual plan was would mean either inventing edges Claude never expressed, or padding for
+   visual density. Conclusion: annotation quality matters more than topology; a thin, honest DAG
+   isn't a problem worth solving. (This reasoning still applies to any *future* task-plan DAG —
+   it just no longer needed solving today, see below.)
+2. **Travis's actual want, on reflection, was a different graph entirely**: not Claude's task
+   list, but a *loose, cross-session file-relationship map* — which files were built because of
+   which others, across the project's whole history, downloadable as a standalone artifact,
+   checkable mid-development from the Dashboard as well as the Terminal page. This replaced the
+   task-DAG idea outright rather than sitting alongside it.
+
+**What shipped**, built by Codex against `CODEX_BRIEF_file_map.md`, reviewed and live-verified
+here:
+- `findAllTranscriptsForProject` (`dashboard.ts`) — genuinely new capability: reads a project's
+  *entire* session history, not just the newest transcript (`findNewestTranscript` refactored to
+  be a thin wrapper over this rather than a separate scan).
+- `src/main/fileMap.ts` — `buildFileTouchTimeline` walks every transcript chronologically,
+  extracting only `Write`/`Edit` tool calls paired with the nearest preceding assistant reasoning
+  (reasoning resets at each new transcript boundary — a much later session's file touch shouldn't
+  inherit an much earlier, unrelated session's last words). `generateFileMap` computes node order
+  deterministically from first-touch time (never asks the LLM to guess ordering — a deliberate,
+  agreed deviation from asking an annotation pass to infer structure) and calls one headless
+  request for edges + reasons only, bounded to one representative (first) touch per file rather
+  than truncating to "most recent" (unlike Briefings, early files matter as much as late ones for
+  a whole-project map). Same graceful-degradation posture as everything else: no transcripts →
+  honest empty state; headless call fails → nodes with no edges, never an error.
+- `renderFileMapHtml` — a genuinely self-contained HTML document (inline SVG + vanilla JS, zero
+  external resources), left-to-right by first-touch order, click-a-node/click-an-edge
+  interactivity. No React Flow — the PRD named it for an in-app DAG, but a *downloadable* artifact
+  can't depend on Starship's React runtime; hand-rolled was the only fit.
+- Two entry points sharing one `FileMapView` component: a Terminal-page toggle (CSS
+  show/hide, not conditional unmount — the brief was explicit that switching views must not kill
+  the live pty) and a Dashboard-level "File Map" button per project (via `FileMapOverlay`,
+  matching `ProjectSummaryOverlay`'s exact pattern) that works with **no active Claude session at
+  all**, since generation only reads past transcripts.
+
+**Live-verified end-to-end against real data**, not just unit tests (105/105 passing, up from
+99): ran the actual `TicTacToe` project (real multi-session history) through the Dashboard's File
+Map button with no session running — got back 12 real file nodes and 16 real relationship edges,
+correctly ordered, with working click-to-inspect. Downloaded the generated file and opened it in a
+genuine standalone Edge browser window (not Starship, not Electron) — fully interactive there too,
+confirming it's actually portable. Separately confirmed the Terminal-page toggle: launched a real
+session, switched to File Map and back, and the terminal's live content was still present
+afterward — the pty was never killed or remounted by the toggle.
+
+**Known gaps carried forward:**
+- The file-touch reasoning is only as good as what Claude happened to say in nearby assistant
+  text — a session with terse tool-only turns and no narration will produce thin or absent edges
+  for that stretch, same honest-emptiness principle as the task-DAG discussion above.
+- No caching/persistence of a generated map — it's recomputed each time (cheaply, since
+  `runHeadlessClaude`'s content-hash cache means no new LLM call unless the underlying file-touch
+  history actually changed since last time).
+
+## Project Log Summary — "where we left off" from PROJECT_LOG.md (2026-07-13, same-day follow-up)
+
+Every real project Travis works on gets a `PROJECT_LOG.md` from his own *global* Claude Code
+instructions (separate from anything Starship's per-project `CLAUDE.md` says). Confirmed by
+reading six real examples (33 to 479 lines) before designing anything - at least one (`Huddle`)
+already contained a literal `### Where to resume next session` section Claude wrote unprompted.
+Two-tier design, built by Codex against `CODEX_BRIEF_project_log_summary.md`:
+- **Free tier**: `findLatestProjectLogEntry` (`dashboard.ts`) parses every `## YYYY-MM-DD` heading
+  and picks the one with the latest actual date - never relies on file position, since real logs
+  disagree on convention (`TicTacToe` is chronological; `Huddle` explicitly states "Newest entries
+  at the top"). Shown as a second clickable line on the dashboard row, under the PRD summary, at
+  zero cost (no LLM call).
+- **On-demand tier**: clicking it calls a new headless pass (`projectLogBriefing.ts`, its own
+  prompt) that summarizes just that entry at decision altitude, reusing `runHeadlessClaude`'s
+  existing cache with no new table - same reasoning as File Map's no-new-table choice. Its
+  fallback on failure is deliberately different from Briefings/File-Map: it shows the entry's own
+  raw text rather than a generic notice, since there's already a perfectly good human-written
+  entry sitting right there.
+
+**A real bug found and fixed during this review, not by Codex's own manual pass** (which it
+explicitly flagged as not run): the initial tie-break for same-dated entries was "first occurrence
+in the file wins," which is correct for `Huddle`'s convention but *silently backwards* for
+`TicTacToe`'s - and both real projects turned out to log every one of their entries **on a single
+calendar date** (`TicTacToe`: all four; `Huddle`: all seven), so this wasn't a rare edge case, it
+was the norm. Fixed with a layered signal: if a log has 2+ *distinct* dates, compare the first and
+last dated heading to detect direction; if every heading shares one date (so that comparison is a
+no-op), fall back to scanning the file's own preamble for an explicit stated convention (the exact
+"Newest entries at the top" sentence `Huddle` already contains) before defaulting to chronological.
+Re-verified live against both real projects after the fix - `TicTacToe` now correctly shows "Phase
+1 milestone: playable game complete" (not "PRD approved", the first entry logged that day), and
+`Huddle` still correctly shows "Seed + verification pass" (not "Step 1: Project scaffolding", the
+oldest). Both generated summaries were genuinely good: Huddle's precisely echoed the log's own
+"resume next session" content without being told to look for it specifically.
+
+`npm run test`: 117/117 (up from 105, including two regression tests locking in the same-date
+tie-break fix for both real conventions).
+
+**Known gap carried forward:** the preamble-scan fallback is a heuristic, not a guarantee - a
+single-date log with no stated convention and no other signal defaults to chronological. This
+matches both real projects observed so far but isn't provably correct for a hypothetical
+single-date, reverse-chronological log that also states no convention.

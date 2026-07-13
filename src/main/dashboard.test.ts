@@ -2,7 +2,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { readPrdPhases, readPrdSummary } from "./dashboard";
+import {
+  findLatestProjectLogEntry,
+  readPrdPhases,
+  readPrdSummary
+} from "./dashboard";
 
 vi.mock("electron", () => ({
   dialog: {
@@ -200,5 +204,175 @@ None yet.
 `);
 
     expect(readPrdPhases(tempDir)).toEqual([]);
+  });
+});
+
+describe("findLatestProjectLogEntry", () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "starship-project-log-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tempDir, { force: true, recursive: true });
+  });
+
+  const writeProjectLog = (content: string): void => {
+    fs.writeFileSync(
+      path.join(tempDir, "PROJECT_LOG.md"),
+      content.trimStart(),
+      "utf8"
+    );
+  };
+
+  it("picks the latest dated heading from a chronological log", () => {
+    writeProjectLog(`
+# Project Log
+
+## 2026-07-10 - PRD approved
+
+The first pass established the shape.
+
+## 2026-07-13 - File map verified
+
+The file map now works from the dashboard and terminal.
+`);
+
+    expect(findLatestProjectLogEntry(tempDir)).toEqual({
+      date: "2026-07-13",
+      title: "2026-07-13 - File map verified",
+      body: "The file map now works from the dashboard and terminal."
+    });
+  });
+
+  it("picks the latest dated heading from a reverse-chronological log", () => {
+    writeProjectLog(`
+# Project Log
+
+Newest entries at the top.
+
+## 2026-07-13 - Resume point captured
+
+The newest entry is intentionally first.
+
+## 2026-07-12 - Earlier implementation
+
+This should not be selected.
+`);
+
+    expect(findLatestProjectLogEntry(tempDir)).toEqual({
+      date: "2026-07-13",
+      title: "2026-07-13 - Resume point captured",
+      body: "The newest entry is intentionally first."
+    });
+  });
+
+  it("returns null when PROJECT_LOG.md is missing", () => {
+    expect(findLatestProjectLogEntry(tempDir)).toBeNull();
+  });
+
+  it("returns null when headings are not dated project-log entries", () => {
+    writeProjectLog(`
+# Project Log
+
+## Notes
+
+This project has a log, but no dated entry headings.
+`);
+
+    expect(findLatestProjectLogEntry(tempDir)).toBeNull();
+  });
+
+  it("extracts a single dated entry", () => {
+    writeProjectLog(`
+# Project Log
+
+## 2026-06-22 (evening) - Seed and verification pass
+
+The seed pass is complete.
+`);
+
+    expect(findLatestProjectLogEntry(tempDir)).toEqual({
+      date: "2026-06-22",
+      title: "2026-06-22 (evening) - Seed and verification pass",
+      body: "The seed pass is complete."
+    });
+  });
+
+  it("keeps nested subheadings in the body but stops at the next entry heading", () => {
+    writeProjectLog(`
+# Project Log
+
+## 2026-07-13 - Latest milestone
+
+### Done and verified working
+
+The main flow is complete.
+
+### Where to resume next session
+
+Start by checking the save path.
+
+## 2026-07-12 - Previous milestone
+
+This content must not be included.
+`);
+
+    expect(findLatestProjectLogEntry(tempDir)).toEqual({
+      date: "2026-07-13",
+      title: "2026-07-13 - Latest milestone",
+      body: "### Done and verified working The main flow is complete. ### Where to resume next session Start by checking the save path."
+    });
+  });
+
+  it("picks the LAST same-dated entry in a chronological log, not the first (a single productive day logging multiple milestones)", () => {
+    writeProjectLog(`
+# Project Log
+
+## 2026-07-13 - PRD approved
+
+Approved the plan.
+
+## 2026-07-13 - Stack chosen
+
+Picked the stack.
+
+## 2026-07-13 - Phase 1 milestone: playable game complete
+
+The game actually works now.
+`);
+
+    expect(findLatestProjectLogEntry(tempDir)).toEqual({
+      date: "2026-07-13",
+      title: "2026-07-13 - Phase 1 milestone: playable game complete",
+      body: "The game actually works now."
+    });
+  });
+
+  it("picks the FIRST same-dated entry in a reverse-chronological log, not the last (newest-at-top convention)", () => {
+    writeProjectLog(`
+# Project Log
+
+Newest entries at the top.
+
+## 2026-07-13 - Phase 1 milestone: playable game complete
+
+The game actually works now.
+
+## 2026-07-13 - Stack chosen
+
+Picked the stack.
+
+## 2026-07-13 - PRD approved
+
+Approved the plan.
+`);
+
+    expect(findLatestProjectLogEntry(tempDir)).toEqual({
+      date: "2026-07-13",
+      title: "2026-07-13 - Phase 1 milestone: playable game complete",
+      body: "The game actually works now."
+    });
   });
 });

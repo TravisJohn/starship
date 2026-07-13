@@ -7,6 +7,8 @@ import type {
   ObservationStatus,
   Project
 } from "../../shared/ipc";
+import { FileMapOverlay } from "./FileMapOverlay";
+import { ProjectLogOverlay } from "./ProjectLogOverlay";
 import { ProjectSummaryOverlay } from "./ProjectSummaryOverlay";
 import { StatusDot } from "./StatusDot";
 
@@ -44,6 +46,9 @@ export const MissionDashboard = ({
   const [skipPermissionsByProjectId, setSkipPermissionsByProjectId] = useState<
     Record<string, boolean>
   >({});
+  const [fileMapProject, setFileMapProject] = useState<MissionProject | null>(null);
+  const [projectLogProject, setProjectLogProject] =
+    useState<MissionProject | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -161,6 +166,16 @@ export const MissionDashboard = ({
   const openSummary = (project: MissionProject): void => {
     appendActivity({ eventType: "summary_overlay_opened", projectId: project.id });
     setSummaryProject(project);
+  };
+
+  const openFileMap = (project: MissionProject): void => {
+    appendActivity({ eventType: "file_map_opened", projectId: project.id });
+    setFileMapProject(project);
+  };
+
+  const openProjectLog = (project: MissionProject): void => {
+    appendActivity({ eventType: "project_log_opened", projectId: project.id });
+    setProjectLogProject(project);
   };
 
   const selectAgent = (projectId: string, agent: AgentKind): void => {
@@ -303,7 +318,7 @@ export const MissionDashboard = ({
                   <th className="w-28 border-b border-zinc-800 px-3 py-2 font-medium">
                     Ignore
                   </th>
-                  <th className="w-80 border-b border-zinc-800 px-3 py-2 font-medium">
+                  <th className="w-[26rem] border-b border-zinc-800 px-3 py-2 font-medium">
                     Actions
                   </th>
                 </tr>
@@ -334,6 +349,22 @@ export const MissionDashboard = ({
                             className="mt-1 cursor-pointer truncate text-xs text-emerald-200 hover:text-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-300"
                           >
                             {project.prdSummary}
+                          </p>
+                        ) : null}
+                        {project.projectLogEntry ? (
+                          <p
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => openProjectLog(project)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                openProjectLog(project);
+                              }
+                            }}
+                            className="mt-1 cursor-pointer truncate text-xs text-emerald-200 hover:text-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                          >
+                            {project.projectLogEntry.title}
                           </p>
                         ) : null}
                       </div>
@@ -413,6 +444,13 @@ export const MissionDashboard = ({
                         >
                           Launch
                         </button>
+                        <button
+                          type="button"
+                          onClick={() => openFileMap(project)}
+                          className="h-8 rounded-md border border-zinc-700 px-3 text-xs font-medium text-zinc-100 hover:border-emerald-400 hover:text-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                        >
+                          File Map
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -425,6 +463,14 @@ export const MissionDashboard = ({
       <ProjectSummaryOverlay
         project={summaryProject}
         onClose={() => setSummaryProject(null)}
+      />
+      <FileMapOverlay
+        project={fileMapProject}
+        onClose={() => setFileMapProject(null)}
+      />
+      <ProjectLogOverlay
+        project={projectLogProject}
+        onClose={() => setProjectLogProject(null)}
       />
     </section>
   );

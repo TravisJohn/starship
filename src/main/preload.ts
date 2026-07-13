@@ -46,6 +46,13 @@ const api: StarshipApi = {
     generate: (request) => ipcRenderer.invoke("briefing:generate", request),
     getLatest: (request) => ipcRenderer.invoke("briefing:getLatest", request)
   },
+  fileMap: {
+    generate: (request) => ipcRenderer.invoke("fileMap:generate", request),
+    download: (request) => ipcRenderer.invoke("fileMap:download", request)
+  },
+  projectLog: {
+    summarize: (request) => ipcRenderer.invoke("projectLog:summarize", request)
+  },
   intent: {
     getLedger: (request) => ipcRenderer.invoke("intent:getLedger", request),
     saveLedger: (request) => ipcRenderer.invoke("intent:saveLedger", request)

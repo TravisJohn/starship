@@ -145,6 +145,10 @@ const describeActivity = (entry: ActivityLogEntry): string => {
       return "intent opened";
     case "summary_overlay_opened":
       return "summary opened";
+    case "file_map_opened":
+      return "file map opened";
+    case "project_log_opened":
+      return "project log opened";
     case "agent_selected":
       return `agent set to ${getString(detail, "agent") ?? "claude"}`;
     case "skip_permissions_toggled":

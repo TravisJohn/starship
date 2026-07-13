@@ -13,9 +13,16 @@ export type MissionProject = Project & {
   ignored: boolean;
   lastActivityAt: string | null;
   prdSummary: string | null;
+  projectLogEntry: ProjectLogEntry | null;
 };
 
 export type PrdPhase = {
+  title: string;
+  body: string;
+};
+
+export type ProjectLogEntry = {
+  date: string;
   title: string;
   body: string;
 };
@@ -54,6 +61,36 @@ export type BriefingGenerateRequest = {
 
 export type BriefingGetLatestRequest = {
   projectId: ProjectId;
+};
+
+export type FileMapGenerateRequest = {
+  projectId: ProjectId;
+  projectPath: string;
+};
+
+export type FileMapGenerateResponse = {
+  html: string;
+  fileCount: number;
+  edgeCount: number;
+  generatedAt: string;
+};
+
+export type FileMapDownloadRequest = {
+  html: string;
+  projectName: string;
+};
+
+export type FileMapDownloadResponse = {
+  savedPath: string | null;
+};
+
+export type ProjectLogSummarizeRequest = {
+  title: string;
+  body: string;
+};
+
+export type ProjectLogSummarizeResponse = {
+  summary: string;
 };
 
 export type IntentLedgerInput = {
@@ -283,6 +320,18 @@ export type RendererToMainInvokeMap = {
     request: BriefingGetLatestRequest;
     response: SessionBriefing | null;
   };
+  "fileMap:generate": {
+    request: FileMapGenerateRequest;
+    response: FileMapGenerateResponse;
+  };
+  "fileMap:download": {
+    request: FileMapDownloadRequest;
+    response: FileMapDownloadResponse;
+  };
+  "projectLog:summarize": {
+    request: ProjectLogSummarizeRequest;
+    response: ProjectLogSummarizeResponse;
+  };
   "activity:append": {
     request: ActivityAppendRequest;
     response: ActivityLogEntry;
@@ -353,6 +402,15 @@ export type StarshipApi = {
   briefing: {
     generate: (request: BriefingGenerateRequest) => Promise<SessionBriefing>;
     getLatest: (request: BriefingGetLatestRequest) => Promise<SessionBriefing | null>;
+  };
+  fileMap: {
+    generate: (request: FileMapGenerateRequest) => Promise<FileMapGenerateResponse>;
+    download: (request: FileMapDownloadRequest) => Promise<FileMapDownloadResponse>;
+  };
+  projectLog: {
+    summarize: (
+      request: ProjectLogSummarizeRequest
+    ) => Promise<ProjectLogSummarizeResponse>;
   };
   intent: {
     getLedger: (request: IntentLedgerRequest) => Promise<IntentLedger | null>;

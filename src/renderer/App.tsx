@@ -10,6 +10,7 @@ import type {
 } from "../shared/ipc";
 import { ActivityLog } from "./components/ActivityLog";
 import { ColdPromptReview } from "./components/ColdPromptReview";
+import { FileMapView } from "./components/FileMapView";
 import { Inception } from "./components/Inception";
 import { InceptionReview } from "./components/InceptionReview";
 import { IntentLedgerEditor } from "./components/IntentLedgerEditor";
@@ -41,6 +42,8 @@ type ExitFlow = {
   summary: string | null;
 };
 
+type ActiveSessionPanel = "terminal" | "fileMap";
+
 export const App = (): JSX.Element => {
   const [view, setView] = useState<AppView>("shelf");
   const [activeSession, setActiveSession] = useState<ActiveSession | null>(null);
@@ -62,6 +65,8 @@ export const App = (): JSX.Element => {
   const [exitFlow, setExitFlow] = useState<ExitFlow | null>(null);
   const [lastBriefing, setLastBriefing] = useState<SessionBriefing | null>(null);
   const [showLastBriefing, setShowLastBriefing] = useState(false);
+  const [activeSessionPanel, setActiveSessionPanel] =
+    useState<ActiveSessionPanel>("terminal");
 
   useEffect(() => {
     activePtySessionIdRef.current = activePtySessionId;
@@ -127,6 +132,7 @@ export const App = (): JSX.Element => {
     // the fallthrough after exitFlow doesn't land on a leftover screen.
     setView("shelf");
     setCreatedProject(null);
+    setActiveSessionPanel("terminal");
     setExitFlow({ project, status: "summarizing", summary: null });
 
     void window.starship.briefing
@@ -208,13 +214,39 @@ export const App = (): JSX.Element => {
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={exitAndSummarize}
-            className="ml-4 h-8 shrink-0 rounded-md border border-zinc-700 px-3 text-sm font-medium text-zinc-100 hover:border-emerald-400 hover:text-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300"
-          >
-            Exit &amp; Summarize
-          </button>
+          <div className="ml-4 flex shrink-0 items-center gap-2">
+            <div className="flex h-8 overflow-hidden rounded-md border border-zinc-700">
+              <button
+                type="button"
+                onClick={() => setActiveSessionPanel("terminal")}
+                className={`px-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-emerald-300 ${
+                  activeSessionPanel === "terminal"
+                    ? "bg-emerald-500 text-zinc-950"
+                    : "text-zinc-100 hover:text-emerald-200"
+                }`}
+              >
+                Terminal
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveSessionPanel("fileMap")}
+                className={`border-l border-zinc-700 px-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-emerald-300 ${
+                  activeSessionPanel === "fileMap"
+                    ? "bg-emerald-500 text-zinc-950"
+                    : "text-zinc-100 hover:text-emerald-200"
+                }`}
+              >
+                File Map
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={exitAndSummarize}
+              className="h-8 shrink-0 rounded-md border border-zinc-700 px-3 text-sm font-medium text-zinc-100 hover:border-emerald-400 hover:text-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+            >
+              Exit &amp; Summarize
+            </button>
+          </div>
         </header>
         {lastBriefing && showLastBriefing ? (
           <div className="flex items-start justify-between gap-3 border-b border-zinc-800 bg-zinc-900/40 px-4 py-2 text-xs text-zinc-300">
@@ -235,7 +267,11 @@ export const App = (): JSX.Element => {
         <RoadmapStrip projectPath={activeSession.project.path} />
         <ActivityLog projectId={activeSession.project.id} />
         <SubagentStrip agents={observation?.subagents ?? []} />
-        <section className="flex min-h-0 min-w-0 flex-1">
+        <section
+          className={`min-h-0 min-w-0 flex-1 ${
+            activeSessionPanel === "terminal" ? "flex" : "hidden"
+          }`}
+        >
           <div className="min-h-0 min-w-0 flex-1">
             <Terminal
               command="claude"
@@ -247,6 +283,17 @@ export const App = (): JSX.Element => {
             />
           </div>
           <Kanban status={observation?.status ?? "no-session-detected"} tasks={observation?.kanban ?? []} />
+        </section>
+        <section
+          className={`min-h-0 min-w-0 flex-1 ${
+            activeSessionPanel === "fileMap" ? "block" : "hidden"
+          }`}
+        >
+          <FileMapView
+            projectId={activeSession.project.id}
+            projectPath={activeSession.project.path}
+            projectName={activeSession.project.name}
+          />
         </section>
       </main>
     );
@@ -294,12 +341,13 @@ export const App = (): JSX.Element => {
           project={createdProject.project}
           coldPrompt={createdProject.coldPrompt}
           onShelf={() => setView("shelf")}
-          onLaunch={(prompt) =>
+          onLaunch={(prompt) => {
+            setActiveSessionPanel("terminal");
             setActiveSession({
               project: createdProject.project,
               args: [prompt]
-            })
-          }
+            });
+          }}
         />
       </main>
     );
@@ -319,15 +367,16 @@ export const App = (): JSX.Element => {
   return (
     <main className="h-screen min-h-0 bg-zinc-950">
       <MissionDashboard
-        onLaunch={(project, options) =>
+        onLaunch={(project, options) => {
+          setActiveSessionPanel("terminal");
           setActiveSession({
             project,
             args: options.dangerouslySkipPermissions
               ? ["--dangerously-skip-permissions"]
               : [],
             dangerouslySkipPermissions: options.dangerouslySkipPermissions
-          })
-        }
+          });
+        }}
         onNewProject={(rootPath) => {
           setInceptionRootPath(rootPath);
           setView("inception");
