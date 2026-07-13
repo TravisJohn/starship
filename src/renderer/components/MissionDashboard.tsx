@@ -30,6 +30,7 @@ export const MissionDashboard = ({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyPath, setBusyPath] = useState<string | null>(null);
+  const [showIgnored, setShowIgnored] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -150,6 +151,11 @@ export const MissionDashboard = ({
     );
   }
 
+  const ignoredCount = dashboard.projects.filter((project) => project.ignored).length;
+  const visibleProjects = dashboard.projects.filter(
+    (project) => showIgnored || !project.ignored
+  );
+
   return (
     <section className="flex h-full min-h-0 flex-col bg-zinc-950 text-zinc-100">
       <header className="flex h-14 shrink-0 items-center justify-between border-b border-zinc-800 px-5">
@@ -160,6 +166,19 @@ export const MissionDashboard = ({
           </p>
         </div>
         <div className="ml-4 flex shrink-0 items-center gap-2">
+          {ignoredCount > 0 ? (
+            <button
+              type="button"
+              onClick={() => setShowIgnored((current) => !current)}
+              className={`h-8 rounded-md border px-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-emerald-300 ${
+                showIgnored
+                  ? "border-emerald-500/70 text-emerald-200"
+                  : "border-zinc-700 text-zinc-100 hover:border-emerald-400 hover:text-emerald-200"
+              }`}
+            >
+              Show ignored ({ignoredCount})
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={() => onNewProject(dashboard.rootPath!)}
@@ -221,7 +240,7 @@ export const MissionDashboard = ({
                 </tr>
               </thead>
               <tbody>
-                {dashboard.projects.map((project) => (
+                {visibleProjects.map((project) => (
                   <tr
                     key={project.path}
                     className={project.ignored ? "text-zinc-500" : "text-zinc-100"}
