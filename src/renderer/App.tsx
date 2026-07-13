@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   InceptionCreateProjectResponse,
   InceptionDraftDocumentsResponse,
@@ -62,6 +62,15 @@ export const App = (): JSX.Element => {
         setObservation(snapshot);
       }
     });
+  }, []);
+
+  // Stable identity across renders - Terminal's mount effect depends on this
+  // prop, and an inline arrow here would re-fire that effect (and its
+  // setObservation(null) reset) on every render this component causes,
+  // including the very observation updates it's supposed to be receiving.
+  const handleTerminalSessionId = useCallback((sessionId: string) => {
+    setObservation(null);
+    setActivePtySessionId(sessionId);
   }, []);
 
   const completeInterview = (interview: InceptionInterview): void => {
@@ -140,10 +149,7 @@ export const App = (): JSX.Element => {
               cwd={activeSession.project.path}
               projectId={activeSession.project.id}
               projectName={activeSession.project.name}
-              onSessionId={(sessionId) => {
-                setObservation(null);
-                setActivePtySessionId(sessionId);
-              }}
+              onSessionId={handleTerminalSessionId}
             />
           </div>
           <Kanban status={observation?.status ?? "no-session-detected"} tasks={observation?.kanban ?? []} />
