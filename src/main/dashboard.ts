@@ -107,7 +107,8 @@ const decorateProjects = (db: StarshipDb, projects: Project[]): MissionProject[]
   return projects.map((project) => ({
     ...project,
     ignored: ignoredByPath.get(project.path) ?? false,
-    lastActivityAt: readLastClaudeActivityAt(project.path)
+    lastActivityAt: readLastClaudeActivityAt(project.path),
+    prdSummary: readPrdSummary(project.path)
   }));
 };
 
@@ -142,6 +143,42 @@ const readLastClaudeActivityAt = (projectPath: string): string | null => {
   }
 
   return newestMs === null ? null : new Date(newestMs).toISOString();
+};
+
+export const readPrdSummary = (projectPath: string): string | null => {
+  let content: string;
+  try {
+    content = fs.readFileSync(path.join(projectPath, "PRD.md"), "utf8");
+  } catch {
+    return null;
+  }
+
+  if (content.trim().length === 0) {
+    return null;
+  }
+
+  const lines = content.split(/\r?\n/);
+  const headingIndex = lines.findIndex((line) =>
+    /^#{1,6}\s*1\.\s*one-?liner/i.test(line)
+  );
+  if (headingIndex === -1) {
+    return null;
+  }
+
+  const summaryLines: string[] = [];
+  for (const line of lines.slice(headingIndex + 1)) {
+    if (/^#/.test(line)) {
+      break;
+    }
+
+    const trimmed = line.trim();
+    if (trimmed.length > 0) {
+      summaryLines.push(trimmed);
+    }
+  }
+
+  const summary = summaryLines.join(" ").replace(/\s+/g, " ").trim();
+  return summary.length > 0 ? summary : null;
 };
 
 const transcriptBelongsToProject = (

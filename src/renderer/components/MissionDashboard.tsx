@@ -5,6 +5,7 @@ import type {
   ObservationStatus,
   Project
 } from "../../shared/ipc";
+import { ProjectSummaryOverlay } from "./ProjectSummaryOverlay";
 import { StatusDot } from "./StatusDot";
 
 type MissionDashboardProps = {
@@ -31,6 +32,7 @@ export const MissionDashboard = ({
   const [error, setError] = useState<string | null>(null);
   const [busyPath, setBusyPath] = useState<string | null>(null);
   const [showIgnored, setShowIgnored] = useState(false);
+  const [summaryProject, setSummaryProject] = useState<MissionProject | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -251,6 +253,22 @@ export const MissionDashboard = ({
                         <p className="mt-1 truncate text-xs text-zinc-500">
                           {project.path}
                         </p>
+                        {project.prdSummary ? (
+                          <p
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => setSummaryProject(project)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                setSummaryProject(project);
+                              }
+                            }}
+                            className="mt-1 cursor-pointer truncate text-xs text-emerald-200 hover:text-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                          >
+                            {project.prdSummary}
+                          </p>
+                        ) : null}
                       </div>
                     </td>
                     <td className="border-b border-zinc-900 px-3 py-3 text-zinc-300">
@@ -311,6 +329,10 @@ export const MissionDashboard = ({
           </div>
         )}
       </div>
+      <ProjectSummaryOverlay
+        project={summaryProject}
+        onClose={() => setSummaryProject(null)}
+      />
     </section>
   );
 };

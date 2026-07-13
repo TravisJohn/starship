@@ -11,6 +11,7 @@ export type Project = {
 export type MissionProject = Project & {
   ignored: boolean;
   lastActivityAt: string | null;
+  prdSummary: string | null;
 };
 
 export type MissionDashboardState = {
