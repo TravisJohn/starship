@@ -39,6 +39,13 @@ const api: StarshipApi = {
     setIgnored: (request) => ipcRenderer.invoke("dashboard:setIgnored", request),
     launch: (request) => ipcRenderer.invoke("dashboard:launch", request)
   },
+  project: {
+    getPhases: (request) => ipcRenderer.invoke("project:getPhases", request)
+  },
+  briefing: {
+    generate: (request) => ipcRenderer.invoke("briefing:generate", request),
+    getLatest: (request) => ipcRenderer.invoke("briefing:getLatest", request)
+  },
   intent: {
     getLedger: (request) => ipcRenderer.invoke("intent:getLedger", request),
     saveLedger: (request) => ipcRenderer.invoke("intent:saveLedger", request)

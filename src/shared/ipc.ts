@@ -15,6 +15,15 @@ export type MissionProject = Project & {
   prdSummary: string | null;
 };
 
+export type PrdPhase = {
+  title: string;
+  body: string;
+};
+
+export type ProjectPhasesRequest = {
+  projectPath: string;
+};
+
 export type MissionDashboardState = {
   rootPath: string | null;
   projects: MissionProject[];
@@ -29,6 +38,22 @@ export type IntentLedger = {
   neverDo: string;
   createdAt: string;
   updatedAt: string;
+};
+
+export type SessionBriefing = {
+  projectId: ProjectId;
+  summary: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type BriefingGenerateRequest = {
+  projectId: ProjectId;
+  projectPath: string;
+};
+
+export type BriefingGetLatestRequest = {
+  projectId: ProjectId;
 };
 
 export type IntentLedgerInput = {
@@ -246,6 +271,18 @@ export type RendererToMainInvokeMap = {
     request: DashboardLaunchRequest;
     response: DashboardLaunchResponse;
   };
+  "project:getPhases": {
+    request: ProjectPhasesRequest;
+    response: PrdPhase[];
+  };
+  "briefing:generate": {
+    request: BriefingGenerateRequest;
+    response: SessionBriefing;
+  };
+  "briefing:getLatest": {
+    request: BriefingGetLatestRequest;
+    response: SessionBriefing | null;
+  };
   "activity:append": {
     request: ActivityAppendRequest;
     response: ActivityLogEntry;
@@ -309,6 +346,13 @@ export type StarshipApi = {
     rescan: () => Promise<MissionDashboardState>;
     setIgnored: (request: DashboardSetIgnoredRequest) => Promise<MissionProject>;
     launch: (request: DashboardLaunchRequest) => Promise<DashboardLaunchResponse>;
+  };
+  project: {
+    getPhases: (request: ProjectPhasesRequest) => Promise<PrdPhase[]>;
+  };
+  briefing: {
+    generate: (request: BriefingGenerateRequest) => Promise<SessionBriefing>;
+    getLatest: (request: BriefingGetLatestRequest) => Promise<SessionBriefing | null>;
   };
   intent: {
     getLedger: (request: IntentLedgerRequest) => Promise<IntentLedger | null>;

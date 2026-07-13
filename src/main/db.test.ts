@@ -22,9 +22,17 @@ vi.mock("better-sqlite3", () => {
     detail: string | null;
   };
 
+  type SessionBriefingRow = {
+    project_id: string;
+    summary: string;
+    created_at: string;
+    updated_at: string;
+  };
+
   class FakeDatabase {
     private rows: ActivityLogRow[] = [];
     private nextId = 1;
+    private briefings = new Map<string, SessionBriefingRow>();
 
     pragma(): void {
       return undefined;
@@ -36,7 +44,7 @@ vi.mock("better-sqlite3", () => {
 
     prepare(sql: string): {
       run: (...args: unknown[]) => { lastInsertRowid: number };
-      get: (...args: unknown[]) => ActivityLogRow | undefined;
+      get: (...args: unknown[]) => ActivityLogRow | SessionBriefingRow | undefined;
       all: (...args: unknown[]) => ActivityLogRow[];
     } {
       return {
@@ -55,12 +63,28 @@ vi.mock("better-sqlite3", () => {
             return { lastInsertRowid: id };
           }
 
+          if (sql.includes("insert into session_briefings")) {
+            const [projectId, summary, createdAt, updatedAt] = args as string[];
+            this.briefings.set(projectId, {
+              project_id: projectId,
+              summary,
+              created_at: createdAt,
+              updated_at: updatedAt
+            });
+            return { lastInsertRowid: 0 };
+          }
+
           return { lastInsertRowid: 0 };
         },
         get: (...args: unknown[]) => {
           if (sql.includes("from activity_log") && sql.includes("where id = ?")) {
             const [id] = args;
             return this.rows.find((row) => row.id === Number(id));
+          }
+
+          if (sql.includes("from session_briefings") && sql.includes("where project_id = ?")) {
+            const [projectId] = args as string[];
+            return this.briefings.get(projectId);
           }
 
           return undefined;
@@ -165,5 +189,45 @@ describe("StarshipDb activity log", () => {
       second.id,
       third.id
     ]);
+  });
+});
+
+describe("StarshipDb session briefings", () => {
+  let tempDir: string;
+  let db: StarshipDb;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "starship-db-briefing-"));
+    db = new StarshipDb(path.join(tempDir, "starship.sqlite"));
+  });
+
+  afterEach(() => {
+    db.close();
+    fs.rmSync(tempDir, { force: true, recursive: true });
+  });
+
+  it("returns null when no briefing has been saved yet", () => {
+    expect(db.getSessionBriefing("project-a")).toBeNull();
+  });
+
+  it("saves and retrieves the latest briefing for a project", () => {
+    const saved = db.saveSessionBriefing("project-a", "Built the game logic and wired up the UI.");
+    expect(db.getSessionBriefing("project-a")).toEqual(saved);
+  });
+
+  it("keeps only the latest briefing per project - a second save replaces the first", () => {
+    const first = db.saveSessionBriefing("project-a", "First summary.");
+    const second = db.saveSessionBriefing("project-a", "Second, more recent summary.");
+
+    expect(second.createdAt).toBe(first.createdAt);
+    expect(db.getSessionBriefing("project-a")).toEqual(second);
+  });
+
+  it("keeps separate projects independent", () => {
+    db.saveSessionBriefing("project-a", "Summary for A.");
+    db.saveSessionBriefing("project-b", "Summary for B.");
+
+    expect(db.getSessionBriefing("project-a")?.summary).toBe("Summary for A.");
+    expect(db.getSessionBriefing("project-b")?.summary).toBe("Summary for B.");
   });
 });

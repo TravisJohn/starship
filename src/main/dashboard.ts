@@ -8,7 +8,9 @@ import type {
   DashboardSetIgnoredRequest,
   MissionDashboardState,
   MissionProject,
-  Project
+  PrdPhase,
+  Project,
+  ProjectPhasesRequest
 } from "../shared/ipc";
 import type { StarshipDb } from "./db";
 import { resolveClaudeProjectDir } from "./observation/slug";
@@ -62,6 +64,11 @@ export const registerDashboardHandlers = (db: StarshipDb): void => {
       return { project };
     }
   );
+
+  ipcMain.handle(
+    "project:getPhases",
+    (_event, request: ProjectPhasesRequest): PrdPhase[] => readPrdPhases(request.projectPath)
+  );
 };
 
 const getDashboardState = (db: StarshipDb): MissionDashboardState => {
@@ -112,7 +119,16 @@ const decorateProjects = (db: StarshipDb, projects: Project[]): MissionProject[]
   }));
 };
 
-const readLastClaudeActivityAt = (projectPath: string): string | null => {
+/**
+ * The newest transcript file under this project's `~/.claude/projects/<slug>/`
+ * directory whose own `cwd` actually matches this project (guards against
+ * the slug function's known collisions - see slug.ts). Shared by the
+ * dashboard's "last activity" display and the session-briefing generator
+ * (briefing.ts), which needs the transcript *path*, not just its mtime.
+ */
+export const findNewestTranscript = (
+  projectPath: string
+): { path: string; mtimeMs: number } | null => {
   const projectDir = resolveClaudeProjectDir(projectPath, CLAUDE_PROJECTS_ROOT);
   let entries: fs.Dirent[];
   try {
@@ -121,7 +137,7 @@ const readLastClaudeActivityAt = (projectPath: string): string | null => {
     return null;
   }
 
-  let newestMs: number | null = null;
+  let newest: { path: string; mtimeMs: number } | null = null;
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.endsWith(".jsonl")) {
       continue;
@@ -139,10 +155,17 @@ const readLastClaudeActivityAt = (projectPath: string): string | null => {
       continue;
     }
 
-    newestMs = newestMs === null ? stat.mtimeMs : Math.max(newestMs, stat.mtimeMs);
+    if (!newest || stat.mtimeMs > newest.mtimeMs) {
+      newest = { path: transcriptPath, mtimeMs: stat.mtimeMs };
+    }
   }
 
-  return newestMs === null ? null : new Date(newestMs).toISOString();
+  return newest;
+};
+
+const readLastClaudeActivityAt = (projectPath: string): string | null => {
+  const newest = findNewestTranscript(projectPath);
+  return newest ? new Date(newest.mtimeMs).toISOString() : null;
 };
 
 export const readPrdSummary = (projectPath: string): string | null => {
@@ -179,6 +202,72 @@ export const readPrdSummary = (projectPath: string): string | null => {
 
   const summary = summaryLines.join(" ").replace(/\s+/g, " ").trim();
   return summary.length > 0 ? summary : null;
+};
+
+/**
+ * Every phase listed in the project's own PRD.md (`## 9. Phases`, tolerant
+ * of numbering/casing drift the same way `readPrdSummary` is for the
+ * one-liner heading), split at each `### Phase N — ...` sub-heading.
+ *
+ * Deliberately does not attempt to say which phase is "current" - nothing
+ * in the transcript reliably signals that a phase has been completed, and
+ * guessing wrong would be worse than not guessing. This is a roadmap
+ * listing, not a progress tracker.
+ */
+export const readPrdPhases = (projectPath: string): PrdPhase[] => {
+  let content: string;
+  try {
+    content = fs.readFileSync(path.join(projectPath, "PRD.md"), "utf8");
+  } catch {
+    return [];
+  }
+
+  const lines = content.split(/\r?\n/);
+  const sectionStartIndex = lines.findIndex((line) => /^#{1,6}\s*\d+\.\s*phases/i.test(line));
+  if (sectionStartIndex === -1) {
+    return [];
+  }
+
+  const sectionHeadingDepth = (lines[sectionStartIndex].match(/^#+/)?.[0] ?? "").length;
+  const sectionLines: string[] = [];
+  for (const line of lines.slice(sectionStartIndex + 1)) {
+    const headingMatch = line.match(/^(#+)\s/);
+    if (headingMatch && headingMatch[1].length <= sectionHeadingDepth) {
+      break;
+    }
+    sectionLines.push(line);
+  }
+
+  const phases: PrdPhase[] = [];
+  let currentTitle: string | null = null;
+  let currentBody: string[] = [];
+
+  const flush = (): void => {
+    if (currentTitle !== null) {
+      phases.push({
+        title: currentTitle.trim(),
+        body: currentBody.join(" ").replace(/\s+/g, " ").trim()
+      });
+    }
+  };
+
+  for (const line of sectionLines) {
+    const phaseHeadingMatch = line.match(/^#+\s*(Phase\s+.+)$/i);
+    if (phaseHeadingMatch) {
+      flush();
+      currentTitle = phaseHeadingMatch[1];
+      currentBody = [];
+      continue;
+    }
+
+    const trimmed = line.trim();
+    if (currentTitle !== null && trimmed.length > 0) {
+      currentBody.push(trimmed);
+    }
+  }
+  flush();
+
+  return phases;
 };
 
 const transcriptBelongsToProject = (

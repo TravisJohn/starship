@@ -5,7 +5,8 @@ import type {
   InceptionInterview,
   ObservationSnapshot,
   ObservationStatus,
-  Project
+  Project,
+  SessionBriefing
 } from "../shared/ipc";
 import { ActivityLog } from "./components/ActivityLog";
 import { ColdPromptReview } from "./components/ColdPromptReview";
@@ -14,6 +15,8 @@ import { InceptionReview } from "./components/InceptionReview";
 import { IntentLedgerEditor } from "./components/IntentLedgerEditor";
 import { Kanban } from "./components/Kanban";
 import { MissionDashboard } from "./components/MissionDashboard";
+import { RoadmapStrip } from "./components/RoadmapStrip";
+import { SessionBriefingScreen } from "./components/SessionBriefingScreen";
 import { StatusDot } from "./components/StatusDot";
 import { SubagentStrip } from "./components/SubagentStrip";
 import { Terminal } from "./components/Terminal";
@@ -30,6 +33,12 @@ type ActiveSession = {
   project: Project;
   args: string[];
   dangerouslySkipPermissions?: boolean;
+};
+
+type ExitFlow = {
+  project: Project;
+  status: "summarizing" | "ready";
+  summary: string | null;
 };
 
 export const App = (): JSX.Element => {
@@ -50,6 +59,9 @@ export const App = (): JSX.Element => {
   const activePtySessionIdRef = useRef<string | null>(null);
   const [observation, setObservation] = useState<ObservationSnapshot | null>(null);
   const [statusByProjectId, setStatusByProjectId] = useState<Record<string, ObservationStatus>>({});
+  const [exitFlow, setExitFlow] = useState<ExitFlow | null>(null);
+  const [lastBriefing, setLastBriefing] = useState<SessionBriefing | null>(null);
+  const [showLastBriefing, setShowLastBriefing] = useState(false);
 
   useEffect(() => {
     activePtySessionIdRef.current = activePtySessionId;
@@ -72,6 +84,64 @@ export const App = (): JSX.Element => {
     setObservation(null);
     setActivePtySessionId(sessionId);
   }, []);
+
+  useEffect(() => {
+    if (!activeSession) {
+      return;
+    }
+
+    let cancelled = false;
+    setLastBriefing(null);
+    setShowLastBriefing(false);
+
+    void window.starship.briefing
+      .getLatest({ projectId: activeSession.project.id })
+      .then((briefing) => {
+        if (!cancelled && briefing) {
+          setLastBriefing(briefing);
+          setShowLastBriefing(true);
+        }
+      })
+      .catch(() => {
+        // Not knowing "since last time" isn't worth surfacing as an error.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSession?.project.id]);
+
+  const exitAndSummarize = (): void => {
+    if (!activeSession) {
+      return;
+    }
+
+    const project = activeSession.project;
+    // Kill the pty immediately (unmounting Terminal) - never make leaving
+    // wait on a headless call succeeding.
+    setActiveSession(null);
+    setActivePtySessionId(null);
+    setObservation(null);
+    // Whatever view led here (fresh Inception's "coldPrompt", or the
+    // dashboard) is stale once exitFlow clears - reset to the dashboard so
+    // the fallthrough after exitFlow doesn't land on a leftover screen.
+    setView("shelf");
+    setCreatedProject(null);
+    setExitFlow({ project, status: "summarizing", summary: null });
+
+    void window.starship.briefing
+      .generate({ projectId: project.id, projectPath: project.path })
+      .then((briefing) => {
+        setExitFlow({ project, status: "ready", summary: briefing.summary });
+      })
+      .catch((error: unknown) => {
+        setExitFlow({
+          project,
+          status: "ready",
+          summary: `Couldn't generate a summary: ${stringifyError(error)}`
+        });
+      });
+  };
 
   const completeInterview = (interview: InceptionInterview): void => {
     setPendingInterview(interview);
@@ -110,6 +180,17 @@ export const App = (): JSX.Element => {
       });
   };
 
+  if (exitFlow) {
+    return (
+      <SessionBriefingScreen
+        projectName={exitFlow.project.name}
+        status={exitFlow.status}
+        summary={exitFlow.summary}
+        onContinue={() => setExitFlow(null)}
+      />
+    );
+  }
+
   if (activeSession) {
     return (
       <main className="flex h-screen min-h-0 flex-col bg-zinc-950 text-zinc-100">
@@ -129,16 +210,29 @@ export const App = (): JSX.Element => {
           </div>
           <button
             type="button"
-            onClick={() => {
-              setActiveSession(null);
-              setActivePtySessionId(null);
-              setObservation(null);
-            }}
+            onClick={exitAndSummarize}
             className="ml-4 h-8 shrink-0 rounded-md border border-zinc-700 px-3 text-sm font-medium text-zinc-100 hover:border-emerald-400 hover:text-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300"
           >
-            Dashboard
+            Exit &amp; Summarize
           </button>
         </header>
+        {lastBriefing && showLastBriefing ? (
+          <div className="flex items-start justify-between gap-3 border-b border-zinc-800 bg-zinc-900/40 px-4 py-2 text-xs text-zinc-300">
+            <p className="min-w-0">
+              <span className="font-semibold text-zinc-400">Since last time: </span>
+              {lastBriefing.summary}
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowLastBriefing(false)}
+              aria-label="Dismiss"
+              className="shrink-0 text-zinc-500 hover:text-zinc-300"
+            >
+              ✕
+            </button>
+          </div>
+        ) : null}
+        <RoadmapStrip projectPath={activeSession.project.path} />
         <ActivityLog projectId={activeSession.project.id} />
         <SubagentStrip agents={observation?.subagents ?? []} />
         <section className="flex min-h-0 min-w-0 flex-1">

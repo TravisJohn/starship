@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { readPrdSummary } from "./dashboard";
+import { readPrdPhases, readPrdSummary } from "./dashboard";
 
 vi.mock("electron", () => ({
   dialog: {
@@ -97,4 +97,108 @@ No body for the one-liner.
   const writePrd = (content: string): void => {
     fs.writeFileSync(path.join(tempDir, "PRD.md"), content.trimStart(), "utf8");
   };
+});
+
+describe("readPrdPhases", () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "starship-prd-phases-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tempDir, { force: true, recursive: true });
+  });
+
+  const writePrd = (content: string): void => {
+    fs.writeFileSync(path.join(tempDir, "PRD.md"), content.trimStart(), "utf8");
+  };
+
+  it("extracts every phase from a real-shaped Phases section, stopping before the next top-level heading", () => {
+    writePrd(`
+# TicTacToe
+
+## 9. Phases (sequenced to retire uncertainty, not to demo value)
+
+*Each phase opens with the strategic question it answers.*
+
+### Phase 1 — Can we make a fun, working game?
+Question: Does a simple game hold up as fun to play together?
+
+Scope: Two players, full game logic, a clean interface.
+
+### Phase 2 — Does keeping score add to the fun?
+Question: Does tracking wins/losses across rounds help?
+
+### Phase 3 — Can we put it on the internet simply?
+Question: What's the simplest way to host it?
+
+## 10. Risks
+
+| Risk | Mitigation |
+|---|---|
+| Something | Something else |
+`);
+
+    const phases = readPrdPhases(tempDir);
+    expect(phases).toEqual([
+      {
+        title: "Phase 1 — Can we make a fun, working game?",
+        body: "Question: Does a simple game hold up as fun to play together? Scope: Two players, full game logic, a clean interface."
+      },
+      {
+        title: "Phase 2 — Does keeping score add to the fun?",
+        body: "Question: Does tracking wins/losses across rounds help?"
+      },
+      {
+        title: "Phase 3 — Can we put it on the internet simply?",
+        body: "Question: What's the simplest way to host it?"
+      }
+    ]);
+  });
+
+  it("returns an empty array when PRD.md is missing", () => {
+    expect(readPrdPhases(tempDir)).toEqual([]);
+  });
+
+  it("returns an empty array when there is no Phases heading", () => {
+    writePrd(`
+# Project
+
+## 1. One-liner
+
+Just a one-liner, no phases section at all.
+`);
+
+    expect(readPrdPhases(tempDir)).toEqual([]);
+  });
+
+  it("matches a lowercase, differently-numbered Phases heading", () => {
+    writePrd(`
+# Project
+
+## 4. phases
+
+### Phase 1 — Only phase
+Some body text.
+`);
+
+    expect(readPrdPhases(tempDir)).toEqual([{ title: "Phase 1 — Only phase", body: "Some body text." }]);
+  });
+
+  it("returns an empty array when the Phases section has no phase sub-headings", () => {
+    writePrd(`
+# Project
+
+## 9. Phases
+
+Nothing decided yet.
+
+## 10. Risks
+
+None yet.
+`);
+
+    expect(readPrdPhases(tempDir)).toEqual([]);
+  });
 });

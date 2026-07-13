@@ -8,7 +8,8 @@ import type {
   IntentLedger,
   IntentLedgerInput,
   Project,
-  ProjectId
+  ProjectId,
+  SessionBriefing
 } from "../shared/ipc";
 
 type ProjectRow = {
@@ -47,6 +48,13 @@ type ActivityLogRow = {
   event_type: string;
   project_id: string | null;
   detail: string | null;
+};
+
+type SessionBriefingRow = {
+  project_id: string;
+  summary: string;
+  created_at: string;
+  updated_at: string;
 };
 
 export class StarshipDb {
@@ -99,6 +107,13 @@ export class StarshipDb {
         event_type text not null,
         project_id text,
         detail text
+      );
+
+      create table if not exists session_briefings (
+        project_id text primary key references projects(id) on delete cascade,
+        summary text not null,
+        created_at text not null,
+        updated_at text not null
       );
     `);
   }
@@ -358,6 +373,41 @@ export class StarshipDb {
     return rows.map(rowToActivityLogEntry);
   }
 
+  getSessionBriefing(projectId: ProjectId): SessionBriefing | null {
+    const row = this.db
+      .prepare(
+        `select project_id, summary, created_at, updated_at
+         from session_briefings
+         where project_id = ?`
+      )
+      .get(projectId) as SessionBriefingRow | undefined;
+
+    return row ? rowToSessionBriefing(row) : null;
+  }
+
+  /**
+   * One row per project - the *latest* briefing only, not a history log.
+   * A Timeline assembling every past briefing is explicitly later PRD scope
+   * (§7); this just needs "what should the Terminal page show right now."
+   */
+  saveSessionBriefing(projectId: ProjectId, summary: string): SessionBriefing {
+    const now = new Date().toISOString();
+    const existing = this.getSessionBriefing(projectId);
+    const createdAt = existing?.createdAt ?? now;
+
+    this.db
+      .prepare(
+        `insert into session_briefings (project_id, summary, created_at, updated_at)
+         values (?, ?, ?, ?)
+         on conflict(project_id) do update set
+           summary = excluded.summary,
+           updated_at = excluded.updated_at`
+      )
+      .run(projectId, summary, createdAt, now);
+
+    return { projectId, summary, createdAt, updatedAt: now };
+  }
+
   close(): void {
     this.db.close();
   }
@@ -406,6 +456,13 @@ const rowToActivityLogEntry = (row: ActivityLogRow): ActivityLogEntry => ({
   eventType: row.event_type,
   projectId: row.project_id,
   detail: row.detail === null ? null : JSON.parse(row.detail)
+});
+
+const rowToSessionBriefing = (row: SessionBriefingRow): SessionBriefing => ({
+  projectId: row.project_id,
+  summary: row.summary,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at
 });
 
 const normalizeActivityLimit = (limit: number | undefined): number => {
