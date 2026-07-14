@@ -9,6 +9,7 @@ import type {
 } from "../shared/ipc";
 import { findAllTranscriptsForProject } from "./dashboard";
 import type { StarshipDb } from "./db";
+import { buildProjectFileTree, type FileTreeNode } from "./fileTree";
 import { getHeadlessCwd, runHeadlessClaude } from "./inception/headlessClaude";
 
 const TIMELINE_CHARACTER_BUDGET = 12000;
@@ -36,6 +37,7 @@ export type FileMapResult = {
   nodes: FileMapNode[];
   edges: FileMapEdge[];
   generatedAt: string;
+  tree: FileTreeNode | null;
 };
 
 const asRecord = (value: unknown): JsonRecord | null =>
@@ -46,6 +48,21 @@ const asRecord = (value: unknown): JsonRecord | null =>
 const asString = (value: unknown): string | null =>
   typeof value === "string" ? value : null;
 
+const countTreeFiles = (node: FileTreeNode | null): number => {
+  if (!node) {
+    return 0;
+  }
+
+  if (node.type === "file") {
+    return 1;
+  }
+
+  return (node.children ?? []).reduce(
+    (total, child) => total + countTreeFiles(child),
+    0
+  );
+};
+
 export const registerFileMapHandlers = (db: StarshipDb): void => {
   ipcMain.handle(
     "fileMap:generate",
@@ -54,9 +71,10 @@ export const registerFileMapHandlers = (db: StarshipDb): void => {
       const projectName = db.getProject(request.projectId)?.name ?? path.basename(request.projectPath);
       return {
         html: renderFileMapHtml(result, projectName),
-        fileCount: result.nodes.length,
+        fileCount: countTreeFiles(result.tree),
         edgeCount: result.edges.length,
-        generatedAt: result.generatedAt
+        generatedAt: result.generatedAt,
+        tree: result.tree
       };
     }
   );
@@ -164,14 +182,20 @@ export const generateFileMap = async (
   request: { projectId: string; projectPath: string }
 ): Promise<FileMapResult> => {
   const generatedAt = new Date().toISOString();
+  // The tree has its own data source (the real project folder, not
+  // transcript history) and no LLM call involved - it should render even
+  // for a project with zero Claude sessions yet, independent of whatever
+  // happens with the DAG below.
+  const tree = buildProjectFileTree(request.projectPath);
+
   const transcripts = findAllTranscriptsForProject(request.projectPath);
   if (transcripts.length === 0) {
-    return { nodes: [], edges: [], generatedAt };
+    return { nodes: [], edges: [], generatedAt, tree };
   }
 
   const timeline = buildFileTouchTimeline(transcripts.map((transcript) => transcript.path));
   if (timeline.length === 0) {
-    return { nodes: [], edges: [], generatedAt };
+    return { nodes: [], edges: [], generatedAt, tree };
   }
 
   const nodes = buildNodes(timeline);
@@ -198,10 +222,11 @@ export const generateFileMap = async (
       edges: extractEdges(raw).filter(
         (edge) => nodePaths.has(edge.from) && nodePaths.has(edge.to)
       ),
-      generatedAt
+      generatedAt,
+      tree
     };
   } catch {
-    return { nodes, edges: [], generatedAt };
+    return { nodes, edges: [], generatedAt, tree };
   }
 };
 
@@ -209,11 +234,12 @@ export const renderFileMapHtml = (
   result: FileMapResult,
   projectName: string
 ): string => {
+  const treeFileCount = countTreeFiles(result.tree);
   const data = serializeJsonForScript({
     projectName,
     generatedAt: result.generatedAt,
-    nodes: result.nodes,
-    edges: result.edges
+    fileCount: treeFileCount,
+    tree: result.tree
   });
 
   return `<!doctype html>
@@ -228,11 +254,12 @@ export const renderFileMapHtml = (
       --bg: #09090b;
       --panel: #18181b;
       --line: #3f3f46;
-      --line-active: #34d399;
+      --line-active: #38bdf8;
       --text: #f4f4f5;
       --muted: #a1a1aa;
       --soft: #27272a;
-      --accent: #34d399;
+      --accent: #38bdf8;
+      --tree-line: #52525b;
     }
     * { box-sizing: border-box; }
     body {
@@ -259,21 +286,38 @@ export const renderFileMapHtml = (
     }
     .empty {
       display: grid;
-      min-height: calc(100vh - 80px);
+      height: 100%;
       place-items: center;
       padding: 24px;
       color: var(--muted);
       text-align: center;
+      font-size: 13px;
     }
     .wrap {
       display: grid;
       grid-template-rows: 1fr auto;
       height: calc(100vh - 76px);
-      min-height: 520px;
+      min-height: 420px;
+    }
+    .tree-shell {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      min-height: 0;
+      min-width: 0;
+    }
+    .panel-header {
+      padding: 10px 20px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+      border-bottom: 1px solid var(--soft);
     }
     .stage {
       overflow: auto;
-      padding: 24px;
+      padding: 16px;
+      min-height: 0;
     }
     svg {
       display: block;
@@ -282,35 +326,32 @@ export const renderFileMapHtml = (
       border-radius: 8px;
       background: #0f0f12;
     }
-    .edge {
-      stroke: var(--line);
-      stroke-width: 2;
+    .tree-edge {
+      stroke: var(--tree-line);
+      stroke-width: 1.5;
       fill: none;
-      opacity: 0.62;
-      cursor: pointer;
+      opacity: 0.7;
     }
-    .edge.active {
-      stroke: var(--line-active);
-      opacity: 1;
-      stroke-width: 3;
-    }
-    .node rect {
+    .tree-node rect {
       fill: var(--panel);
-      stroke: #52525b;
+      stroke: #3f3f46;
       stroke-width: 1;
-      rx: 8;
+      rx: 6;
       cursor: pointer;
     }
-    .node.active rect {
+    .tree-node.directory rect {
+      stroke: #3f5a6b;
+    }
+    .tree-node.active rect {
       stroke: var(--accent);
       stroke-width: 2;
     }
-    .node text {
+    .tree-node text {
       fill: var(--text);
       font-size: 12px;
       pointer-events: none;
     }
-    .order {
+    .tree-node .badge {
       fill: var(--muted);
       font-size: 10px;
     }
@@ -324,18 +365,18 @@ export const renderFileMapHtml = (
       line-height: 1.45;
     }
     .detail strong { color: var(--text); }
+    .detail ul { margin: 6px 0 0; padding-left: 18px; }
   </style>
 </head>
 <body>
   <header>
     <h1>${escapeHtml(projectName)} File Map</h1>
-    <div class="meta">${result.nodes.length} files, ${result.edges.length} relationships, generated ${escapeHtml(result.generatedAt)}</div>
+    <div class="meta">${treeFileCount} files in tree, generated ${escapeHtml(result.generatedAt)}</div>
   </header>
   <main id="app"></main>
   <script>
     const data = ${data};
     const app = document.getElementById("app");
-    const basename = (filePath) => filePath.split(/[\\\\/]/).filter(Boolean).pop() || filePath;
     const esc = (value) => String(value).replace(/[&<>"']/g, (char) => ({
       "&": "&amp;",
       "<": "&lt;",
@@ -344,70 +385,179 @@ export const renderFileMapHtml = (
       "'": "&#39;"
     })[char]);
 
-    if (data.nodes.length === 0) {
-      app.innerHTML = '<div class="empty">No files have been touched by Claude in this project yet.</div>';
-    } else {
-      renderGraph();
+    app.innerHTML = '<div class="wrap">'
+      + '<div class="tree-shell"><div class="panel-header">File Tree</div><div class="stage" id="tree-stage"></div></div>'
+      + '<div class="detail" id="detail"><strong>File details</strong></div></div>';
+
+    const detail = document.getElementById("detail");
+
+    // Horizontal collapsible file tree. Whole-project structure (not just
+    // touched files), no LLM call involved. Every directory at depth >= 2
+    // starts collapsed so
+    // a real project doesn't render as an unusable wall of nodes on first
+    // paint; root's own immediate children are expanded by default.
+    const collapsed = new Set();
+
+    function collectDirectoryPaths(node, out) {
+      if (node.type !== "directory") return;
+      if (node.path && node.path.split("/").length >= 2) out.push(node.path);
+      (node.children || []).forEach((child) => collectDirectoryPaths(child, out));
     }
 
-    function renderGraph() {
-      const nodeWidth = 210;
-      const nodeHeight = 62;
-      const marginX = 56;
-      const marginY = 62;
-      const gapX = data.nodes.length > 8 ? 180 : 220;
-      const rowGap = 132;
-      const rowCount = data.nodes.length > 8 ? 3 : 2;
-      const width = Math.max(900, marginX * 2 + nodeWidth + gapX * Math.max(0, data.nodes.length - 1));
-      const height = marginY * 2 + nodeHeight + rowGap * (rowCount - 1);
+    if (data.tree) {
+      const deepPaths = [];
+      collectDirectoryPaths(data.tree, deepPaths);
+      deepPaths.forEach((p) => collapsed.add(p));
+    }
+
+    function isLeafForLayout(node) {
+      return node.type === "file" || !node.children || node.children.length === 0 || collapsed.has(node.path);
+    }
+
+    function countLayoutLeaves(node) {
+      if (isLeafForLayout(node)) return 1;
+      return node.children.reduce((total, child) => total + countLayoutLeaves(child), 0);
+    }
+
+    function layoutTree(root, rowHeight, levelGap) {
       const positions = new Map();
+      let leafCounter = 0;
 
-      data.nodes.forEach((node, index) => {
-        positions.set(node.filePath, {
-          x: marginX + index * gapX,
-          y: marginY + (index % rowCount) * rowGap
-        });
-      });
+      function visit(node, depth) {
+        const leaf = isLeafForLayout(node);
+        let y;
+        if (leaf) {
+          y = leafCounter * rowHeight;
+          leafCounter += 1;
+        } else {
+          const childYs = node.children.map((child) => visit(child, depth + 1));
+          y = (Math.min.apply(null, childYs) + Math.max.apply(null, childYs)) / 2;
+        }
+        positions.set(node.path, { node, x: depth * levelGap, y, depth, leaf });
+        return y;
+      }
 
-      const edgeMarkup = data.edges.map((edge, index) => {
-        const from = positions.get(edge.from);
-        const to = positions.get(edge.to);
-        if (!from || !to) return "";
-        const startX = from.x + nodeWidth;
-        const startY = from.y + nodeHeight / 2;
-        const endX = to.x;
-        const endY = to.y + nodeHeight / 2;
-        const curve = Math.max(60, Math.abs(endX - startX) / 2);
-        return '<path class="edge" data-edge-index="' + index + '" data-from="' + esc(edge.from) + '" data-to="' + esc(edge.to) + '" data-reason="' + esc(edge.reason) + '" d="M ' + startX + ' ' + startY + ' C ' + (startX + curve) + ' ' + startY + ', ' + (endX - curve) + ' ' + endY + ', ' + endX + ' ' + endY + '" marker-end="url(#arrow)"><title>' + esc(edge.reason) + '</title></path>';
-      }).join("");
+      visit(root, 0);
+      return { positions, rowCount: leafCounter };
+    }
 
-      const nodeMarkup = data.nodes.map((node) => {
-        const pos = positions.get(node.filePath);
-        return '<g class="node" data-file="' + esc(node.filePath) + '" transform="translate(' + pos.x + ' ' + pos.y + ')"><rect width="' + nodeWidth + '" height="' + nodeHeight + '"></rect><title>' + esc(node.filePath) + '</title><text x="12" y="24">' + esc(basename(node.filePath)).slice(0, 28) + '</text><text class="order" x="12" y="44">#' + (node.order + 1) + ' ' + esc(node.filePath).slice(0, 38) + '</text></g>';
-      }).join("");
+    function renderTree() {
+      const stage = document.getElementById("tree-stage");
+      if (!data.tree) {
+        stage.innerHTML = '<div class="empty">Couldn\\'t read the project folder.</div>';
+        return;
+      }
+      if (!data.tree.children || data.tree.children.length === 0) {
+        stage.innerHTML = '<div class="empty">No source files found.</div>';
+        return;
+      }
 
-      app.innerHTML = '<div class="wrap"><div class="stage"><svg width="' + width + '" height="' + height + '" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="File relationship graph"><defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#3f3f46"></path></marker></defs>' + edgeMarkup + nodeMarkup + '</svg></div><div class="detail" id="detail">Click a file to highlight relationships. Click a relationship to read why it exists.</div></div>';
+      const nodeWidth = 230;
+      const marginX = 28;
+      const marginY = 24;
+      const levelGap = 260;
+      const leafCount = countLayoutLeaves(data.tree);
+      const availableHeight = Math.max(280, stage.clientHeight - marginY * 2);
+      const rowHeight = Math.max(34, Math.min(42, Math.floor(availableHeight / Math.max(1, leafCount))));
+      const nodeHeight = Math.min(36, rowHeight - 4);
+      const textY = Math.round(nodeHeight / 2 + 4);
+      const previousScrollLeft = stage.scrollLeft;
+      const previousScrollTop = stage.scrollTop;
 
-      const detail = document.getElementById("detail");
-      document.querySelectorAll(".node").forEach((nodeElement) => {
-        nodeElement.addEventListener("click", () => {
-          const filePath = nodeElement.getAttribute("data-file");
-          document.querySelectorAll(".node").forEach((item) => item.classList.toggle("active", item === nodeElement));
-          document.querySelectorAll(".edge").forEach((edgeElement) => {
-            edgeElement.classList.toggle("active", edgeElement.getAttribute("data-from") === filePath || edgeElement.getAttribute("data-to") === filePath);
+      const { positions, rowCount } = layoutTree(data.tree, rowHeight, levelGap);
+      const maxDepth = Math.max.apply(null, Array.from(positions.values()).map((p) => p.depth));
+      const stageWidth = Math.max(640, stage.clientWidth - 32);
+      const width = Math.max(stageWidth, marginX * 2 + nodeWidth + maxDepth * levelGap);
+      const contentHeight = marginY * 2 + Math.max(0, rowCount - 1) * rowHeight + nodeHeight;
+      const height = Math.max(Math.max(320, stage.clientHeight - 32), contentHeight);
+
+      const edgeMarkup = [];
+      const nodeMarkup = [];
+
+      positions.forEach((pos) => {
+        const node = pos.node;
+        const x = marginX + pos.x;
+        const y = marginY + pos.y - nodeHeight / 2;
+
+        if (node.type === "directory") {
+          const childCount = (node.children || []).length;
+          const isCollapsed = collapsed.has(node.path) && childCount > 0;
+          const marker = childCount === 0 ? "" : (isCollapsed ? "+ " : "- ");
+          const label = marker + (node.name || data.projectName);
+          nodeMarkup.push(
+            '<g class="tree-node directory" data-path="' + esc(node.path) + '" transform="translate(' + x + ' ' + y + ')">' +
+            '<rect width="' + nodeWidth + '" height="' + nodeHeight + '"></rect>' +
+            '<title>' + esc(node.path || data.projectName) + '</title>' +
+            '<text x="10" y="' + textY + '">' + esc(label).slice(0, 32) + '</text>' +
+            (childCount > 0 ? '<text class="badge" x="' + (nodeWidth - 10) + '" y="' + textY + '" text-anchor="end">' + childCount + '</text>' : '') +
+            '</g>'
+          );
+        } else {
+          const fnCount = Array.isArray(node.functions) ? node.functions.length : null;
+          const badge = fnCount === null ? "" : (fnCount + " fn");
+          nodeMarkup.push(
+            '<g class="tree-node file" data-path="' + esc(node.path) + '" transform="translate(' + x + ' ' + y + ')">' +
+            '<rect width="' + nodeWidth + '" height="' + nodeHeight + '"></rect>' +
+            '<title>' + esc(node.path) + '</title>' +
+            '<text x="10" y="' + textY + '">' + esc(node.name).slice(0, 28) + '</text>' +
+            (badge ? '<text class="badge" x="' + (nodeWidth - 10) + '" y="' + textY + '" text-anchor="end">' + esc(badge) + '</text>' : '') +
+            '</g>'
+          );
+        }
+
+        if (node.type === "directory" && node.children && !collapsed.has(node.path)) {
+          node.children.forEach((child) => {
+            const childPos = positions.get(child.path);
+            if (!childPos) return;
+            const startX = x + nodeWidth;
+            const startY = marginY + pos.y;
+            const endX = marginX + childPos.x;
+            const endY = marginY + childPos.y;
+            const midX = startX + (endX - startX) / 2;
+            edgeMarkup.push(
+              '<path class="tree-edge" d="M ' + startX + ' ' + startY + ' H ' + midX + ' V ' + endY + ' H ' + endX + '"></path>'
+            );
           });
-          detail.innerHTML = '<strong>' + esc(filePath) + '</strong>';
+        }
+      });
+
+      stage.innerHTML = '<svg width="' + width + '" height="' + height + '" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="Project file tree">' + edgeMarkup.join("") + nodeMarkup.join("") + '</svg>';
+      stage.scrollLeft = previousScrollLeft;
+      stage.scrollTop = previousScrollTop;
+
+      stage.querySelectorAll(".tree-node.directory").forEach((el) => {
+        el.addEventListener("click", () => {
+          const p = el.getAttribute("data-path");
+          if (collapsed.has(p)) collapsed.delete(p); else collapsed.add(p);
+          renderTree();
         });
       });
 
-      document.querySelectorAll(".edge").forEach((edgeElement) => {
-        edgeElement.addEventListener("click", () => {
-          document.querySelectorAll(".node").forEach((item) => item.classList.remove("active"));
-          document.querySelectorAll(".edge").forEach((item) => item.classList.toggle("active", item === edgeElement));
-          detail.innerHTML = '<strong>' + esc(edgeElement.getAttribute("data-from")) + ' -> ' + esc(edgeElement.getAttribute("data-to")) + '</strong><br>' + esc(edgeElement.getAttribute("data-reason"));
+      stage.querySelectorAll(".tree-node.file").forEach((el) => {
+        el.addEventListener("click", () => {
+          stage.querySelectorAll(".tree-node").forEach((item) => item.classList.toggle("active", item === el));
+          const filePath = el.getAttribute("data-path");
+          const pos = positions.get(filePath);
+          const node = pos ? pos.node : null;
+          if (!node) return;
+          if (node.functions === null || node.functions === undefined) {
+            detail.innerHTML = '<strong>' + esc(filePath) + '</strong><br>No functions extracted for this file type.';
+          } else if (node.functions.length === 0) {
+            detail.innerHTML = '<strong>' + esc(filePath) + '</strong><br>No functions found.';
+          } else {
+            detail.innerHTML = '<strong>' + esc(filePath) + '</strong><ul>' + node.functions.map((fn) => '<li>' + esc(fn) + '</li>').join("") + '</ul>';
+          }
         });
       });
     }
+
+    let resizeTimer = 0;
+    window.addEventListener("resize", () => {
+      window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(renderTree, 100);
+    });
+
+    renderTree();
   </script>
 </body>
 </html>`;

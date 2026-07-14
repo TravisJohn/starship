@@ -37,7 +37,11 @@ const api: StarshipApi = {
     locateRoot: () => ipcRenderer.invoke("dashboard:locateRoot"),
     rescan: () => ipcRenderer.invoke("dashboard:rescan"),
     setIgnored: (request) => ipcRenderer.invoke("dashboard:setIgnored", request),
+    refreshProject: (request) => ipcRenderer.invoke("dashboard:refreshProject", request),
     launch: (request) => ipcRenderer.invoke("dashboard:launch", request)
+  },
+  assets: {
+    getLoadingMedia: () => ipcRenderer.invoke("assets:getLoadingMedia")
   },
   project: {
     getPhases: (request) => ipcRenderer.invoke("project:getPhases", request)
@@ -55,7 +59,16 @@ const api: StarshipApi = {
   },
   intent: {
     getLedger: (request) => ipcRenderer.invoke("intent:getLedger", request),
-    saveLedger: (request) => ipcRenderer.invoke("intent:saveLedger", request)
+    saveLedger: (request) => ipcRenderer.invoke("intent:saveLedger", request),
+    annotate: (request) => ipcRenderer.invoke("intent:annotate", request),
+    discuss: (request) => ipcRenderer.invoke("intent:discuss", request)
+  },
+  notes: {
+    list: (request) => ipcRenderer.invoke("notes:list", request),
+    add: (request) => ipcRenderer.invoke("notes:add", request),
+    update: (request) => ipcRenderer.invoke("notes:update", request),
+    setDone: (request) => ipcRenderer.invoke("notes:setDone", request),
+    delete: (request) => ipcRenderer.invoke("notes:delete", request)
   },
   inception: {
     renderTemplates: (request) =>

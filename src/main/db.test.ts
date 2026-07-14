@@ -29,10 +29,21 @@ vi.mock("better-sqlite3", () => {
     updated_at: string;
   };
 
+  type NoteRow = {
+    id: string;
+    project_id: string;
+    text: string;
+    content: string;
+    done: number;
+    created_at: string;
+    updated_at: string;
+  };
+
   class FakeDatabase {
     private rows: ActivityLogRow[] = [];
     private nextId = 1;
     private briefings = new Map<string, SessionBriefingRow>();
+    private notes: NoteRow[] = [];
 
     pragma(): void {
       return undefined;
@@ -44,8 +55,10 @@ vi.mock("better-sqlite3", () => {
 
     prepare(sql: string): {
       run: (...args: unknown[]) => { lastInsertRowid: number };
-      get: (...args: unknown[]) => ActivityLogRow | SessionBriefingRow | undefined;
-      all: (...args: unknown[]) => ActivityLogRow[];
+      get: (...args: unknown[]) => ActivityLogRow | SessionBriefingRow | NoteRow | undefined;
+      all: (
+        ...args: unknown[]
+      ) => ActivityLogRow[] | NoteRow[] | { project_id: string; count: number }[];
     } {
       return {
         run: (...args: unknown[]) => {
@@ -74,6 +87,47 @@ vi.mock("better-sqlite3", () => {
             return { lastInsertRowid: 0 };
           }
 
+          if (sql.includes("insert into notes")) {
+            const [id, projectId, text, content, createdAt, updatedAt] = args as string[];
+            this.notes.push({
+              id,
+              project_id: projectId,
+              text,
+              content,
+              done: 0,
+              created_at: createdAt,
+              updated_at: updatedAt
+            });
+            return { lastInsertRowid: 0 };
+          }
+
+          if (sql.includes("update notes set text")) {
+            const [text, content, updatedAt, id] = args as string[];
+            const note = this.notes.find((row) => row.id === id);
+            if (note) {
+              note.text = text;
+              note.content = content;
+              note.updated_at = updatedAt;
+            }
+            return { lastInsertRowid: 0 };
+          }
+
+          if (sql.includes("update notes set done")) {
+            const [done, updatedAt, id] = args as [number, string, string];
+            const note = this.notes.find((row) => row.id === id);
+            if (note) {
+              note.done = done;
+              note.updated_at = updatedAt;
+            }
+            return { lastInsertRowid: 0 };
+          }
+
+          if (sql.includes("delete from notes")) {
+            const [id] = args as string[];
+            this.notes = this.notes.filter((row) => row.id !== id);
+            return { lastInsertRowid: 0 };
+          }
+
           return { lastInsertRowid: 0 };
         },
         get: (...args: unknown[]) => {
@@ -87,9 +141,35 @@ vi.mock("better-sqlite3", () => {
             return this.briefings.get(projectId);
           }
 
+          if (sql.includes("from notes") && sql.includes("where id = ?")) {
+            const [id] = args as string[];
+            return this.notes.find((row) => row.id === id);
+          }
+
           return undefined;
         },
         all: (...args: unknown[]) => {
+          if (sql.includes("from notes") && sql.includes("where project_id = ?")) {
+            const [projectId] = args as string[];
+            return this.notes
+              .filter((row) => row.project_id === projectId)
+              .sort((a, b) => a.created_at.localeCompare(b.created_at));
+          }
+
+          if (sql.includes("from notes") && sql.includes("group by project_id")) {
+            const projectIds = args as string[];
+            const counts = new Map<string, number>();
+            for (const note of this.notes) {
+              if (note.done !== 0) continue;
+              if (!projectIds.includes(note.project_id)) continue;
+              counts.set(note.project_id, (counts.get(note.project_id) ?? 0) + 1);
+            }
+            return Array.from(counts.entries()).map(([project_id, count]) => ({
+              project_id,
+              count
+            }));
+          }
+
           if (!sql.includes("from activity_log")) {
             return [];
           }
@@ -229,5 +309,106 @@ describe("StarshipDb session briefings", () => {
 
     expect(db.getSessionBriefing("project-a")?.summary).toBe("Summary for A.");
     expect(db.getSessionBriefing("project-b")?.summary).toBe("Summary for B.");
+  });
+});
+
+describe("StarshipDb notes", () => {
+  let tempDir: string;
+  let db: StarshipDb;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "starship-db-notes-"));
+    db = new StarshipDb(path.join(tempDir, "starship.sqlite"));
+  });
+
+  afterEach(() => {
+    db.close();
+    fs.rmSync(tempDir, { force: true, recursive: true });
+  });
+
+  it("returns an empty list for a project with no notes", () => {
+    expect(db.listNotes("project-a")).toEqual([]);
+  });
+
+  it("adds a note with a subject and content, undone by default", () => {
+    const note = db.addNote({
+      projectId: "project-a",
+      text: "Try caching the query",
+      content: "Could shave several seconds off the dashboard load."
+    });
+
+    expect(note.done).toBe(false);
+    expect(note.text).toBe("Try caching the query");
+    expect(note.content).toBe("Could shave several seconds off the dashboard load.");
+    expect(db.listNotes("project-a")).toEqual([note]);
+  });
+
+  it("allows empty content - the subject alone is a valid note", () => {
+    const note = db.addNote({ projectId: "project-a", text: "Quick idea", content: "" });
+    expect(note.content).toBe("");
+  });
+
+  it("lists notes for a project in creation order", () => {
+    const first = db.addNote({ projectId: "project-a", text: "First idea", content: "" });
+    const second = db.addNote({ projectId: "project-a", text: "Second idea", content: "" });
+
+    expect(db.listNotes("project-a")).toEqual([first, second]);
+  });
+
+  it("keeps separate projects independent", () => {
+    db.addNote({ projectId: "project-a", text: "For A", content: "" });
+    db.addNote({ projectId: "project-b", text: "For B", content: "" });
+
+    expect(db.listNotes("project-a")).toHaveLength(1);
+    expect(db.listNotes("project-b")).toHaveLength(1);
+  });
+
+  it("toggles done on and off", () => {
+    const note = db.addNote({ projectId: "project-a", text: "Fix the bug", content: "" });
+
+    const done = db.setNoteDone(note.id, true);
+    expect(done.done).toBe(true);
+
+    const undone = db.setNoteDone(note.id, false);
+    expect(undone.done).toBe(false);
+  });
+
+  it("updates both subject and content", () => {
+    const note = db.addNote({ projectId: "project-a", text: "Draft idea", content: "rough notes" });
+
+    const updated = db.updateNote(note.id, { text: "Refined idea", content: "polished notes" });
+    expect(updated.text).toBe("Refined idea");
+    expect(updated.content).toBe("polished notes");
+    expect(db.listNotes("project-a")).toEqual([updated]);
+  });
+
+  it("deletes a note", () => {
+    const note = db.addNote({ projectId: "project-a", text: "Temporary", content: "" });
+    db.deleteNote(note.id);
+
+    expect(db.listNotes("project-a")).toEqual([]);
+  });
+
+  it("counts only undone notes per project", () => {
+    const first = db.addNote({ projectId: "project-a", text: "First", content: "" });
+    db.addNote({ projectId: "project-a", text: "Second", content: "" });
+    db.setNoteDone(first.id, true);
+    db.addNote({ projectId: "project-b", text: "Elsewhere", content: "" });
+
+    const counts = db.getUndoneNoteCounts(["project-a", "project-b"]);
+    expect(counts.get("project-a")).toBe(1);
+    expect(counts.get("project-b")).toBe(1);
+  });
+
+  it("omits a project entirely from the map when it has zero undone notes", () => {
+    const note = db.addNote({ projectId: "project-a", text: "Only one", content: "" });
+    db.setNoteDone(note.id, true);
+
+    const counts = db.getUndoneNoteCounts(["project-a"]);
+    expect(counts.has("project-a")).toBe(false);
+  });
+
+  it("returns an empty map for an empty project id list", () => {
+    expect(db.getUndoneNoteCounts([])).toEqual(new Map());
   });
 });

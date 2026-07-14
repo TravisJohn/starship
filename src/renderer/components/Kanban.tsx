@@ -13,19 +13,20 @@ const COLUMNS: Array<{ status: KanbanTaskStatus; label: string }> = [
 
 // Read-only by design: Claude Code owns task state (CLAUDE.md), this pane
 // only reflects it. No drag, no editing, no local mutation.
+//
+// Renders just its content, not an outer shell - DevSidebar owns the
+// surrounding <aside> and the Tasks/Notes tab toggle around it.
 export const Kanban = ({ status, tasks }: KanbanProps): JSX.Element => {
   if (status === "no-session-detected") {
     return (
-      <aside className="flex h-full min-h-0 w-72 shrink-0 flex-col border-l border-zinc-800 bg-zinc-950">
-        <div className="flex h-full items-center justify-center p-4">
-          <p className="text-center text-xs text-zinc-500">No session detected</p>
-        </div>
-      </aside>
+      <div className="flex h-full items-center justify-center p-4">
+        <p className="text-center text-xs text-zinc-500">No session detected</p>
+      </div>
     );
   }
 
   return (
-    <aside className="flex h-full min-h-0 w-72 shrink-0 flex-col overflow-y-auto border-l border-zinc-800 bg-zinc-950 p-3">
+    <div className="h-full min-h-0 overflow-y-auto p-3">
       {COLUMNS.map((column) => {
         const columnTasks = tasks.filter((task) => task.status === column.status);
         return (
@@ -49,6 +50,6 @@ export const Kanban = ({ status, tasks }: KanbanProps): JSX.Element => {
           </section>
         );
       })}
-    </aside>
+    </div>
   );
 };

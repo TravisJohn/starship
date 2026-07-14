@@ -3,7 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  computeProjectSizeBytes,
+  computeSevenDayActivity,
   findLatestProjectLogEntry,
+  getCachedProjectSizeBytes,
   readPrdPhases,
   readPrdSummary
 } from "./dashboard";
@@ -376,3 +379,108 @@ Approved the plan.
     });
   });
 });
+
+describe("computeProjectSizeBytes", () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "starship-size-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tempDir, { force: true, recursive: true });
+  });
+
+  it("returns null when the project path can't be read", () => {
+    expect(computeProjectSizeBytes(path.join(tempDir, "missing"))).toBeNull();
+  });
+
+  it("sums file sizes recursively through nested directories", () => {
+    fs.writeFileSync(path.join(tempDir, "a.txt"), "12345");
+    fs.mkdirSync(path.join(tempDir, "nested"));
+    fs.writeFileSync(path.join(tempDir, "nested", "b.txt"), "1234567890");
+
+    expect(computeProjectSizeBytes(tempDir)).toBe(5 + 10);
+  });
+
+  it("returns 0 for an empty directory", () => {
+    expect(computeProjectSizeBytes(tempDir)).toBe(0);
+  });
+});
+
+describe("getCachedProjectSizeBytes", () => {
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "starship-size-cache-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tempDir, { force: true, recursive: true });
+  });
+
+  it("returns a stale cached value on a second call when forceRefresh is false", () => {
+    fs.writeFileSync(path.join(tempDir, "a.txt"), "12345");
+    const first = getCachedProjectSizeBytes(tempDir, false);
+    expect(first).toBe(5);
+
+    fs.writeFileSync(path.join(tempDir, "b.txt"), "1234567890");
+    const second = getCachedProjectSizeBytes(tempDir, false);
+
+    expect(second).toBe(first);
+  });
+
+  it("recomputes when forceRefresh is true", () => {
+    fs.writeFileSync(path.join(tempDir, "a.txt"), "12345");
+    getCachedProjectSizeBytes(tempDir, false);
+
+    fs.writeFileSync(path.join(tempDir, "b.txt"), "1234567890");
+    const refreshed = getCachedProjectSizeBytes(tempDir, true);
+
+    expect(refreshed).toBe(5 + 10);
+  });
+
+  it("caches per project path independently", () => {
+    const otherDir = fs.mkdtempSync(path.join(os.tmpdir(), "starship-size-cache-other-"));
+    try {
+      fs.writeFileSync(path.join(tempDir, "a.txt"), "12345");
+      fs.writeFileSync(path.join(otherDir, "b.txt"), "1234567890");
+
+      expect(getCachedProjectSizeBytes(tempDir, false)).toBe(5);
+      expect(getCachedProjectSizeBytes(otherDir, false)).toBe(10);
+    } finally {
+      fs.rmSync(otherDir, { force: true, recursive: true });
+    }
+  });
+});
+
+describe("computeSevenDayActivity", () => {
+  it("returns 7 days, oldest first, all zero when there are no transcripts", () => {
+    const result = computeSevenDayActivity([]);
+    expect(result).toHaveLength(7);
+    expect(result.every((day) => day.count === 0)).toBe(true);
+    expect(result[6].date).toBe(formatToday());
+  });
+
+  it("counts multiple transcripts touched on the same day", () => {
+    const now = Date.now();
+    const result = computeSevenDayActivity([{ mtimeMs: now }, { mtimeMs: now }]);
+
+    expect(result[6]).toEqual({ date: formatToday(), count: 2 });
+  });
+
+  it("ignores a transcript older than the 7-day window", () => {
+    const eightDaysAgo = Date.now() - 8 * 24 * 60 * 60 * 1000;
+    const result = computeSevenDayActivity([{ mtimeMs: eightDaysAgo }]);
+
+    expect(result.every((day) => day.count === 0)).toBe(true);
+  });
+});
+
+const formatToday = (): string => {
+  const date = new Date();
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+};

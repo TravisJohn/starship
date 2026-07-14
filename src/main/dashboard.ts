@@ -20,7 +20,7 @@ import { parseSessionLine } from "./parser";
 const CLAUDE_PROJECTS_ROOT = path.join(os.homedir(), ".claude", "projects");
 
 export const registerDashboardHandlers = (db: StarshipDb): void => {
-  ipcMain.handle("dashboard:getState", () => getDashboardState(db));
+  ipcMain.handle("dashboard:getState", () => getDashboardState(db, false));
 
   ipcMain.handle("dashboard:locateRoot", async () => {
     const result = await dialog.showOpenDialog({
@@ -33,10 +33,10 @@ export const registerDashboardHandlers = (db: StarshipDb): void => {
     }
 
     db.setRootPath(result.filePaths[0]);
-    return getDashboardState(db);
+    return getDashboardState(db, true);
   });
 
-  ipcMain.handle("dashboard:rescan", () => getDashboardState(db));
+  ipcMain.handle("dashboard:rescan", () => getDashboardState(db, true));
 
   ipcMain.handle(
     "dashboard:setIgnored",
@@ -49,7 +49,19 @@ export const registerDashboardHandlers = (db: StarshipDb): void => {
         throw new Error(`Project not found: ${resolvedPath}`);
       }
 
-      return decorateProjects(db, [project])[0];
+      return decorateProjects(db, [project], false)[0];
+    }
+  );
+
+  ipcMain.handle(
+    "dashboard:refreshProject",
+    (_event, request: { projectId: string }): MissionProject => {
+      const project = db.getProject(request.projectId);
+      if (!project) {
+        throw new Error(`Project not found: ${request.projectId}`);
+      }
+
+      return decorateProjects(db, [project], false)[0];
     }
   );
 
@@ -72,7 +84,7 @@ export const registerDashboardHandlers = (db: StarshipDb): void => {
   );
 };
 
-const getDashboardState = (db: StarshipDb): MissionDashboardState => {
+const getDashboardState = (db: StarshipDb, forceRefresh: boolean): MissionDashboardState => {
   const rootPath = db.getRootPath();
   if (!rootPath) {
     return { rootPath: null, projects: [] };
@@ -83,7 +95,7 @@ const getDashboardState = (db: StarshipDb): MissionDashboardState => {
 
   return {
     rootPath,
-    projects: decorateProjects(db, projects),
+    projects: decorateProjects(db, projects, forceRefresh),
     scanError: discovered.error
   };
 };
@@ -109,16 +121,55 @@ const discoverImmediateChildDirectories = (
   return { paths };
 };
 
-const decorateProjects = (db: StarshipDb, projects: Project[]): MissionProject[] => {
+const decorateProjects = (
+  db: StarshipDb,
+  projects: Project[],
+  forceRefresh: boolean
+): MissionProject[] => {
   const ignoredByPath = db.getIgnoredProjectPaths(projects.map((project) => project.path));
+  const undoneNoteCounts = db.getUndoneNoteCounts(projects.map((project) => project.id));
 
-  return projects.map((project) => ({
-    ...project,
-    ignored: ignoredByPath.get(project.path) ?? false,
-    lastActivityAt: readLastClaudeActivityAt(project.path),
-    prdSummary: readPrdSummary(project.path),
-    projectLogEntry: findLatestProjectLogEntry(project.path)
-  }));
+  return projects.map((project) => {
+    const transcripts = findAllTranscriptsForProject(project.path);
+    const newest = transcripts.at(-1) ?? null;
+
+    return {
+      ...project,
+      ignored: ignoredByPath.get(project.path) ?? false,
+      lastActivityAt: newest ? new Date(newest.mtimeMs).toISOString() : null,
+      prdSummary: readPrdSummary(project.path),
+      projectLogEntry: findLatestProjectLogEntry(project.path),
+      sizeBytes: getCachedProjectSizeBytes(project.path, forceRefresh),
+      activityHeatmap: computeSevenDayActivity(transcripts),
+      undoneNoteCount: undoneNoteCounts.get(project.id) ?? 0
+    };
+  });
+};
+
+/**
+ * computeProjectSizeBytes walks the whole project tree (including
+ * node_modules - see its own docs for why) and can genuinely take seconds
+ * for a large real project. That's fine for an explicit Rescan click, but
+ * unacceptable for the plain "load the dashboard" / "navigate back to it"
+ * path, which fires on every MissionDashboard mount. Cache in-memory per
+ * project path for the life of this process - recomputed only when the
+ * caller explicitly asks (Rescan, Locate Root, Re-point Root), never on a
+ * quiet getState().
+ */
+const projectSizeCache = new Map<string, number | null>();
+
+export const getCachedProjectSizeBytes = (
+  projectPath: string,
+  forceRefresh: boolean
+): number | null => {
+  const resolvedPath = path.resolve(projectPath);
+  if (!forceRefresh && projectSizeCache.has(resolvedPath)) {
+    return projectSizeCache.get(resolvedPath) ?? null;
+  }
+
+  const size = computeProjectSizeBytes(resolvedPath);
+  projectSizeCache.set(resolvedPath, size);
+  return size;
 };
 
 /**
@@ -169,9 +220,89 @@ export const findAllTranscriptsForProject = (
   return transcripts.sort((a, b) => a.mtimeMs - b.mtimeMs);
 };
 
-const readLastClaudeActivityAt = (projectPath: string): string | null => {
-  const newest = findNewestTranscript(projectPath);
-  return newest ? new Date(newest.mtimeMs).toISOString() : null;
+/**
+ * Recursive disk size of the whole project folder, no exclusions (matches
+ * "size of the whole project" literally rather than inventing an exclusion
+ * policy - e.g. node_modules is included). Tolerant throughout: symlinks are
+ * skipped to avoid cycles, any unreadable file/dir is skipped rather than
+ * thrown, and only a fully unreadable root returns null.
+ */
+export const computeProjectSizeBytes = (projectPath: string): number | null => {
+  let rootEntries: fs.Dirent[];
+  try {
+    rootEntries = fs.readdirSync(projectPath, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+
+  let total = 0;
+  const walk = (dirPath: string, entries: fs.Dirent[]): void => {
+    for (const entry of entries) {
+      if (entry.isSymbolicLink()) {
+        continue;
+      }
+
+      const entryPath = path.join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        let childEntries: fs.Dirent[];
+        try {
+          childEntries = fs.readdirSync(entryPath, { withFileTypes: true });
+        } catch {
+          continue;
+        }
+        walk(entryPath, childEntries);
+        continue;
+      }
+
+      if (entry.isFile()) {
+        try {
+          total += fs.statSync(entryPath).size;
+        } catch {
+          continue;
+        }
+      }
+    }
+  };
+
+  walk(projectPath, rootEntries);
+  return total;
+};
+
+/**
+ * Buckets transcript file mtimes into the last 7 calendar days (local time,
+ * oldest first) - counts transcripts *touched*, not raw tool/turn counts, a
+ * coarse "how active recently" signal in the same spirit as the existing
+ * "Last Activity" timestamp rather than a generated narrative subject to
+ * the stricter altitude-discipline rule for briefings.
+ */
+export const computeSevenDayActivity = (
+  transcripts: { mtimeMs: number }[]
+): { date: string; count: number }[] => {
+  const days: { date: string; count: number }[] = [];
+  const today = new Date();
+
+  for (let offset = 6; offset >= 0; offset -= 1) {
+    const day = new Date(today.getFullYear(), today.getMonth(), today.getDate() - offset);
+    days.push({ date: formatLocalDate(day), count: 0 });
+  }
+
+  const countByDate = new Map(days.map((day) => [day.date, day]));
+  for (const transcript of transcripts) {
+    const date = formatLocalDate(new Date(transcript.mtimeMs));
+    const bucket = countByDate.get(date);
+    if (bucket) {
+      bucket.count += 1;
+    }
+  }
+
+  return days;
+};
+
+const formatLocalDate = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 };
 
 export const readPrdSummary = (projectPath: string): string | null => {

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { FileMapGenerateResponse } from "../../shared/ipc";
+import { LoadingAnimation } from "./LoadingAnimation";
 
 type FileMapViewProps = {
   projectId: string;
@@ -69,18 +70,16 @@ export const FileMapView = ({
         <div className="min-w-0">
           <h2 className="truncate text-sm font-semibold leading-none">File Map</h2>
           <p className="mt-1 truncate text-xs text-zinc-500">
-            {result
-              ? `${result.fileCount} files, ${result.edgeCount} relationships`
-              : projectName}
+            {result ? `${result.fileCount} files in tree` : projectName}
           </p>
         </div>
         <button
           type="button"
           disabled={!result || saving}
           onClick={() => void download()}
-          className={`h-8 shrink-0 rounded-md border px-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-emerald-300 ${
+          className={`h-8 shrink-0 rounded-md border px-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-sky-300 ${
             result && !saving
-              ? "border-zinc-700 text-zinc-100 hover:border-emerald-400 hover:text-emerald-200"
+              ? "border-zinc-700 text-zinc-100 hover:border-sky-400 hover:text-sky-200"
               : "cursor-not-allowed border-zinc-800 text-zinc-500"
           }`}
         >
@@ -104,9 +103,11 @@ export const FileMapView = ({
       ) : null}
 
       {!result && !error ? (
-        <div className="flex min-h-0 flex-1 items-center justify-center">
-          <p className="text-sm text-zinc-400">Generating file map...</p>
-        </div>
+        <LoadingAnimation
+          label="Generating file map"
+          className="min-h-0 flex-1"
+          mediaClassName="h-36 w-64 max-w-[64vw]"
+        />
       ) : null}
 
       {result ? (

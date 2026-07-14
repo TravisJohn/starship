@@ -9,7 +9,8 @@ vi.mock("electron", () => ({
   ipcMain: { handle: vi.fn() }
 }));
 
-import { buildFileTouchTimeline } from "./fileMap";
+import type { StarshipDb } from "./db";
+import { buildFileTouchTimeline, generateFileMap } from "./fileMap";
 
 let tempDir: string;
 let firstTranscriptPath: string;
@@ -176,4 +177,40 @@ const assistantTextAndTool = (
       }
     ]
   }
+});
+
+describe("generateFileMap", () => {
+  let projectDir: string;
+
+  beforeEach(() => {
+    projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "starship-file-map-project-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(projectDir, { recursive: true, force: true });
+  });
+
+  it("includes a real file tree even when there is no transcript history yet", async () => {
+    fs.writeFileSync(path.join(projectDir, "index.ts"), "export function main() {}", "utf8");
+
+    const db = {} as unknown as StarshipDb;
+    const result = await generateFileMap(db, { projectId: "proj-1", projectPath: projectDir });
+
+    expect(result.nodes).toEqual([]);
+    expect(result.edges).toEqual([]);
+    expect(result.tree?.type).toBe("directory");
+    expect(result.tree?.children).toEqual([
+      { name: "index.ts", path: "index.ts", type: "file", functions: ["main"] }
+    ]);
+  });
+
+  it("returns a null tree when the project path can't be read", async () => {
+    const db = {} as unknown as StarshipDb;
+    const result = await generateFileMap(db, {
+      projectId: "proj-1",
+      projectPath: path.join(projectDir, "does-not-exist")
+    });
+
+    expect(result.tree).toBeNull();
+  });
 });

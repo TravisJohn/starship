@@ -185,3 +185,60 @@ tie-break fix for both real conventions).
 single-date log with no stated convention and no other signal defaults to chronological. This
 matches both real projects observed so far but isn't provably correct for a hypothetical
 single-date, reverse-chronological log that also states no convention.
+
+## Intent Ledger annotation pass (2026-07-13, same-day follow-up)
+
+The one capability the PRD's Phase 4 acceptance line actually names and nothing shipped so far
+covers: "for a real multi-phase session, Travis answers 'why is step 4 before step 5?' and 'does
+this plan serve my stated intent?' from the Intent panel alone." Roadmap Strip, Session Briefings,
+File Map, and Project Log Summary are all genuinely useful, but none of them is this. Built directly
+this pass (not routed through Codex) against a self-written brief, `CODEX_BRIEF_intent_annotation.md`.
+
+- `src/main/intentAnnotation.ts` (new) - `buildTaskReasoningTimeline` reads the *current* session's
+  newest transcript (via the existing `findNewestTranscript`, not the cross-session
+  `findAllTranscriptsForProject` File Map uses - this is scoped to one live session, not project
+  history) and extracts the nearest-preceding assistant reasoning at each `TaskCreate` call, for
+  both the incremental and bulk shapes (`parser/taskShape.ts`'s existing interpreters, not
+  re-implemented). `matchReasoningToTasks` then matches that timeline back onto the renderer's live
+  Kanban snapshot by exact label, in order, first-unused-match-wins - ids stay opaque and are never
+  sent to the LLM, only human-readable labels are. `generateIntentAnnotation` composes the Intent
+  Ledger (or `null`, for projects added via "Locate Root" rather than Inception) + the matched task
+  list into one headless call, then reconciles the response back onto real task ids with the same
+  defensive-filter idiom File Map already established for edges (drop anything the model reasoned
+  about beyond its own input; default-annotate anything from the input the model dropped).
+- **Deliberately click-triggered, not live-refreshing** - the Kanban ticks continuously during a
+  session (Phase 3's <2s lag); auto-firing this pass on every tick would be a headless call running
+  in a loop, which CLAUDE.md bans outright regardless of caching. `IntentPanel.tsx` never fetches on
+  mount or on `tasks` changing - only on an explicit "Check Against Intent" click, same posture as
+  Exit & Summarize and the Project Log Summary click.
+- `prompts/intent-annotation.md` (new) - per-task ordering rationale + which Ledger dimension it
+  serves (`purpose`/`successCriteria`/`acceptedTradeoffs`/`neverDo`/`none`), a plain flag if a task
+  brushes against `neverDo`, plus one overall plan-vs-intent verdict. Same never-fabricate,
+  decision-altitude rule structure as every other prompt this phase - explicitly told to say "no
+  rationale was captured" rather than invent one when the transcript's own reasoning is generic.
+- New `intent:annotate` IPC channel, added to the existing `intent` namespace (alongside
+  `getLedger`/`saveLedger`) rather than a new one. New third Terminal-page toggle ("Intent") next to
+  Terminal/File Map, same CSS show/hide (never unmount) discipline that protects the live pty.
+- No Dashboard entry point (unlike File Map) - this only makes sense against a live task list, which
+  only exists during an active Terminal session. No new DB table - generated fresh per click,
+  `runHeadlessClaude`'s existing content-hash cache covers repeat checks on an unchanged snapshot.
+
+**Live-verified against real data**, not just unit tests (`npm run test`: 131/131, up from 117;
+`npm run build` clean with no type errors): ran `buildTaskReasoningTimeline` against both of
+TicTacToe's real transcripts directly - correctly extracted all 7 Phase-1 tasks from a bulk
+`TaskCreate` call with their shared preceding reasoning, and all 6 second-session tasks the same
+way. Then ran the full annotation pipeline - real task snapshot, TicTacToe's actual Intent Ledger
+content read from its own PRD.md ("So that we can play TicTacToe" / "Playing tictactoe with nice
+interface live in the internet with scores" / "nothing" / "something that is too complicated") -
+through a real `claude -p` call. The result was genuinely good, not filler: it honestly said no
+rationale was captured for tasks whose only recorded reasoning was generic task-tracking boilerplate
+(never fabricated a plausible-sounding excuse), and it caught a real, decision-relevant gap - none
+of Phase 1's 7 tasks address the "live in the internet" half of the stated success criteria, which
+the overall verdict named explicitly.
+
+**Known gap carried forward:** this pass verified the backend pipeline (extraction, matching,
+prompt, real headless call, response reconciliation) directly against real transcripts and a real
+Intent Ledger, but did not drive the actual Electron UI end-to-end (spawning a live session, opening
+the Intent toggle, clicking the button in-app). The renderer code follows the exact same
+fetch-on-demand/loading-state/honest-empty-state shape already proven out by `FileMapView.tsx`, but
+an in-app click-through has not been done for this feature specifically.

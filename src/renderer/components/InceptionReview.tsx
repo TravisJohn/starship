@@ -37,15 +37,15 @@ export const InceptionReview = ({
             type="button"
             onClick={onBack}
             disabled={busy}
-            className="h-8 rounded-md border border-zinc-700 px-3 text-sm font-medium text-zinc-100 hover:border-emerald-400 hover:text-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300 disabled:cursor-not-allowed disabled:text-zinc-500"
+            className="h-8 rounded-md border border-zinc-700 px-3 text-sm font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300 disabled:cursor-not-allowed disabled:text-zinc-500"
           >
-            Inception
+            Start Again
           </button>
           <button
             type="button"
             onClick={() => onCreate(prd, claude)}
             disabled={busy || prd.trim().length === 0 || claude.trim().length === 0}
-            className="h-8 rounded-md bg-emerald-500 px-3 text-sm font-medium text-zinc-950 hover:bg-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-300 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
+            className="h-8 rounded-md bg-sky-500 px-3 text-sm font-medium text-zinc-950 hover:bg-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-300 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
           >
             Create Project
           </button>
@@ -83,7 +83,7 @@ const Editor = ({ label, value, onChange }: EditorProps): JSX.Element => (
     <textarea
       value={value}
       onChange={(event) => onChange(event.target.value)}
-      className="min-h-0 flex-1 resize-none rounded-md border border-zinc-800 bg-zinc-900 px-3 py-3 font-mono text-sm leading-6 text-zinc-100 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/30"
+      className="min-h-0 flex-1 resize-none rounded-md border border-zinc-800 bg-zinc-900 px-3 py-3 font-mono text-sm leading-6 text-zinc-100 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-400/30"
     />
   </label>
 );

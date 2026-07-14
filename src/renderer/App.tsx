@@ -10,11 +10,13 @@ import type {
 } from "../shared/ipc";
 import { ActivityLog } from "./components/ActivityLog";
 import { ColdPromptReview } from "./components/ColdPromptReview";
+import { DevSidebar } from "./components/DevSidebar";
 import { FileMapView } from "./components/FileMapView";
 import { Inception } from "./components/Inception";
 import { InceptionReview } from "./components/InceptionReview";
 import { IntentLedgerEditor } from "./components/IntentLedgerEditor";
-import { Kanban } from "./components/Kanban";
+import { IntentPanel } from "./components/IntentPanel";
+import { LoadingAnimation } from "./components/LoadingAnimation";
 import { MissionDashboard } from "./components/MissionDashboard";
 import { RoadmapStrip } from "./components/RoadmapStrip";
 import { SessionBriefingScreen } from "./components/SessionBriefingScreen";
@@ -42,7 +44,7 @@ type ExitFlow = {
   summary: string | null;
 };
 
-type ActiveSessionPanel = "terminal" | "fileMap";
+type ActiveSessionPanel = "terminal" | "fileMap" | "intent";
 
 export const App = (): JSX.Element => {
   const [view, setView] = useState<AppView>("shelf");
@@ -115,6 +117,22 @@ export const App = (): JSX.Element => {
       cancelled = true;
     };
   }, [activeSession?.project.id]);
+
+  // Quick escape for a session with nothing worth summarizing (e.g. an
+  // accidental launch) - kills the pty via the same Terminal-unmount path
+  // as exitAndSummarize, but skips the headless briefing call entirely.
+  const exitToDashboard = (): void => {
+    if (!activeSession) {
+      return;
+    }
+
+    setActiveSession(null);
+    setActivePtySessionId(null);
+    setObservation(null);
+    setView("shelf");
+    setCreatedProject(null);
+    setActiveSessionPanel("terminal");
+  };
 
   const exitAndSummarize = (): void => {
     if (!activeSession) {
@@ -199,7 +217,7 @@ export const App = (): JSX.Element => {
 
   if (activeSession) {
     return (
-      <main className="flex h-screen min-h-0 flex-col bg-zinc-950 text-zinc-100">
+      <main className="flex h-screen min-h-0 flex-col bg-zinc-950 pb-3 text-zinc-100">
         <header className="flex h-12 shrink-0 items-center justify-between border-b border-zinc-800 px-4">
           <div className="flex min-w-0 items-center gap-2">
             <StatusDot status={observation?.status} />
@@ -219,10 +237,10 @@ export const App = (): JSX.Element => {
               <button
                 type="button"
                 onClick={() => setActiveSessionPanel("terminal")}
-                className={`px-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-emerald-300 ${
+                className={`px-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-sky-300 ${
                   activeSessionPanel === "terminal"
-                    ? "bg-emerald-500 text-zinc-950"
-                    : "text-zinc-100 hover:text-emerald-200"
+                    ? "bg-sky-500 text-zinc-950"
+                    : "text-zinc-100 hover:text-sky-200"
                 }`}
               >
                 Terminal
@@ -230,19 +248,37 @@ export const App = (): JSX.Element => {
               <button
                 type="button"
                 onClick={() => setActiveSessionPanel("fileMap")}
-                className={`border-l border-zinc-700 px-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-emerald-300 ${
+                className={`border-l border-zinc-700 px-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-sky-300 ${
                   activeSessionPanel === "fileMap"
-                    ? "bg-emerald-500 text-zinc-950"
-                    : "text-zinc-100 hover:text-emerald-200"
+                    ? "bg-sky-500 text-zinc-950"
+                    : "text-zinc-100 hover:text-sky-200"
                 }`}
               >
                 File Map
               </button>
+              <button
+                type="button"
+                onClick={() => setActiveSessionPanel("intent")}
+                className={`border-l border-zinc-700 px-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-sky-300 ${
+                  activeSessionPanel === "intent"
+                    ? "bg-sky-500 text-zinc-950"
+                    : "text-zinc-100 hover:text-sky-200"
+                }`}
+              >
+                Intent
+              </button>
             </div>
             <button
               type="button"
+              onClick={exitToDashboard}
+              className="h-8 shrink-0 rounded-md border border-zinc-700 px-3 text-sm font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
+            >
+              Back to Dashboard
+            </button>
+            <button
+              type="button"
               onClick={exitAndSummarize}
-              className="h-8 shrink-0 rounded-md border border-zinc-700 px-3 text-sm font-medium text-zinc-100 hover:border-emerald-400 hover:text-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+              className="h-8 shrink-0 rounded-md border border-zinc-700 px-3 text-sm font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
             >
               Exit &amp; Summarize
             </button>
@@ -282,7 +318,11 @@ export const App = (): JSX.Element => {
               onSessionId={handleTerminalSessionId}
             />
           </div>
-          <Kanban status={observation?.status ?? "no-session-detected"} tasks={observation?.kanban ?? []} />
+          <DevSidebar
+            status={observation?.status ?? "no-session-detected"}
+            tasks={observation?.kanban ?? []}
+            projectId={activeSession.project.id}
+          />
         </section>
         <section
           className={`min-h-0 min-w-0 flex-1 ${
@@ -295,6 +335,17 @@ export const App = (): JSX.Element => {
             projectName={activeSession.project.name}
           />
         </section>
+        <section
+          className={`min-h-0 min-w-0 flex-1 ${
+            activeSessionPanel === "intent" ? "block" : "hidden"
+          }`}
+        >
+          <IntentPanel
+            projectId={activeSession.project.id}
+            projectPath={activeSession.project.path}
+            tasks={observation?.kanban ?? []}
+          />
+        </section>
       </main>
     );
   }
@@ -304,7 +355,11 @@ export const App = (): JSX.Element => {
       <main className="h-screen min-h-0 bg-zinc-950">
         <Inception
           rootPath={inceptionRootPath}
-          onCancel={() => setView("shelf")}
+          initialInterview={pendingInterview}
+          onCancel={() => {
+            setPendingInterview(null);
+            setView("shelf");
+          }}
           onComplete={completeInterview}
         />
       </main>
@@ -314,7 +369,7 @@ export const App = (): JSX.Element => {
   if (view === "drafting") {
     return (
       <main className="flex h-screen min-h-0 items-center justify-center bg-zinc-950 text-zinc-100">
-        <p className="text-sm text-zinc-300">Drafting project brief</p>
+        <LoadingAnimation label="Drafting project brief" />
       </main>
     );
   }
@@ -379,6 +434,7 @@ export const App = (): JSX.Element => {
         }}
         onNewProject={(rootPath) => {
           setInceptionRootPath(rootPath);
+          setPendingInterview(null);
           setView("inception");
         }}
         onEditIntent={(project) => {

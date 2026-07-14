@@ -20,7 +20,7 @@ export const SubagentStrip = ({ agents }: SubagentStripProps): JSX.Element | nul
         >
           <span
             className={`h-1.5 w-1.5 rounded-full ${
-              agent.status === "running" ? "bg-amber-400" : "bg-emerald-400"
+              agent.status === "running" ? "bg-amber-400" : "bg-sky-400"
             }`}
           />
           {agent.description}

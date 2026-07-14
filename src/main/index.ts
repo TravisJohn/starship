@@ -1,17 +1,22 @@
 import { app, BrowserWindow } from "electron";
+
 import path from "node:path";
 import { registerActivityHandlers } from "./activity";
+import { registerBrandAssetHandlers, startBrandAssetServer, type BrandAssetServer } from "./brandAssets";
 import { registerBriefingHandlers } from "./briefing";
 import { registerDashboardHandlers } from "./dashboard";
-import { createStarshipDb, registerIntentHandlers, type StarshipDb } from "./db";
+import { createStarshipDb, registerIntentHandlers, registerNotesHandlers, type StarshipDb } from "./db";
 import { registerFileMapHandlers } from "./fileMap";
 import { registerInceptionHandlers } from "./inception";
+import { registerIntentAnnotationHandlers } from "./intentAnnotation";
+import { registerIntentDiscussHandlers } from "./intentDiscuss";
 import { ObservationManager } from "./observation/observationManager";
 import { registerProjectLogBriefingHandlers } from "./projectLogBriefing";
 import { PtyManager } from "./pty/ptyManager";
 
 let mainWindow: BrowserWindow | null = null;
 let db: StarshipDb | null = null;
+let brandAssets: BrandAssetServer | null = null;
 const ptyManager = new PtyManager();
 const observationManager = new ObservationManager();
 
@@ -47,11 +52,12 @@ ptyManager.onExit((sessionId) => {
 const createMainWindow = (): void => {
   mainWindow = new BrowserWindow({
     width: 1200,
-    height: 800,
+    height: 840,
     minWidth: 900,
     minHeight: 600,
     title: "Starship",
-    backgroundColor: "#0f172a",
+    backgroundColor: "#000000",
+    icon: path.join(app.getAppPath(), "brand", "starship.png"),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -67,13 +73,18 @@ const createMainWindow = (): void => {
   }
 };
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  brandAssets = await startBrandAssetServer();
   db = createStarshipDb();
+  registerBrandAssetHandlers(brandAssets);
   registerActivityHandlers(db, () => mainWindow);
   registerBriefingHandlers(db);
   registerDashboardHandlers(db);
   registerFileMapHandlers(db);
   registerIntentHandlers(db);
+  registerIntentAnnotationHandlers(db);
+  registerIntentDiscussHandlers(db);
+  registerNotesHandlers(db);
   registerInceptionHandlers(db);
   registerProjectLogBriefingHandlers(db);
   ptyManager.registerIpcHandlers();
@@ -95,5 +106,6 @@ app.on("window-all-closed", () => {
 app.on("before-quit", () => {
   ptyManager.killAll();
   observationManager.stopAll();
+  brandAssets?.close();
   db?.close();
 });

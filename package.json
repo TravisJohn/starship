@@ -28,6 +28,7 @@
     "node-pty": "^1.1.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "typescript-classic": "npm:typescript@^5.9.3",
     "xterm": "^5.3.0",
     "xterm-addon-fit": "^0.8.0"
   },
@@ -56,11 +57,13 @@
       "dist/**/*",
       "prompts/**/*",
       "templates/**/*",
+      "brand/**/*",
       "package.json"
     ],
     "directories": {
       "output": "release"
     },
+    "icon": "brand/starship.png",
     "win": {
       "target": "nsis"
     }

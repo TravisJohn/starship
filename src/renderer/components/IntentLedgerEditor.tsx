@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { IntentLedgerInput, Project } from "../../shared/ipc";
+import { LoadingAnimation } from "./LoadingAnimation";
 
 type IntentLedgerEditorProps = {
   project: Project;
@@ -108,7 +109,7 @@ export const IntentLedgerEditor = ({
           <button
             type="button"
             onClick={onClose}
-            className="h-8 rounded-md border border-zinc-700 px-3 text-sm font-medium text-zinc-100 hover:border-emerald-400 hover:text-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+            className="h-8 rounded-md border border-zinc-700 px-3 text-sm font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
           >
             Dashboard
           </button>
@@ -116,7 +117,7 @@ export const IntentLedgerEditor = ({
             type="button"
             onClick={() => void save()}
             disabled={saving || loading}
-            className="h-8 rounded-md bg-emerald-500 px-3 text-sm font-medium text-zinc-950 hover:bg-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-300 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
+            className="h-8 rounded-md bg-sky-500 px-3 text-sm font-medium text-zinc-950 hover:bg-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-300 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
           >
             Save
           </button>
@@ -129,14 +130,18 @@ export const IntentLedgerEditor = ({
         </div>
       ) : null}
       {savedAt ? (
-        <div className="border-b border-emerald-500/30 bg-emerald-500/10 px-5 py-2 text-sm text-emerald-100">
+        <div className="border-b border-sky-500/30 bg-sky-500/10 px-5 py-2 text-sm text-sky-100">
           Intent updated.
         </div>
       ) : null}
 
       <div className="mx-auto min-h-0 w-full max-w-4xl flex-1 overflow-auto p-5">
         {loading ? (
-          <p className="text-sm text-zinc-400">Loading intent</p>
+          <LoadingAnimation
+            label="Loading intent"
+            className="h-full"
+            mediaClassName="h-36 w-64 max-w-[64vw]"
+          />
         ) : (
           <form
             className="space-y-4"
@@ -185,7 +190,7 @@ const TextArea = ({ label, value, onChange }: TextAreaProps): JSX.Element => (
       value={value}
       rows={5}
       onChange={(event) => onChange(event.target.value)}
-      className="mt-2 w-full resize-y rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm leading-6 text-zinc-100 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/30"
+      className="mt-2 w-full resize-y rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm leading-6 text-zinc-100 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-400/30"
     />
   </label>
 );

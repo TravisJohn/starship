@@ -7,6 +7,7 @@ import type {
   ActivityLogEntry,
   IntentLedger,
   IntentLedgerInput,
+  Note,
   Project,
   ProjectId,
   SessionBriefing
@@ -53,6 +54,16 @@ type ActivityLogRow = {
 type SessionBriefingRow = {
   project_id: string;
   summary: string;
+  created_at: string;
+  updated_at: string;
+};
+
+type NoteRow = {
+  id: string;
+  project_id: string;
+  text: string;
+  content: string;
+  done: number;
   created_at: string;
   updated_at: string;
 };
@@ -115,7 +126,32 @@ export class StarshipDb {
         created_at text not null,
         updated_at text not null
       );
+
+      create table if not exists notes (
+        id text primary key,
+        project_id text not null references projects(id) on delete cascade,
+        text text not null,
+        done integer not null default 0 check (done in (0, 1)),
+        created_at text not null,
+        updated_at text not null
+      );
     `);
+
+    this.migrateNotesContentColumn();
+  }
+
+  /**
+   * `notes` originally shipped with just a single `text` field (a flat
+   * checklist item). Notes gained a separate subject/content split shortly
+   * after, and `create table if not exists` is a no-op for anyone who
+   * already has the old table (including real notes already saved) - this
+   * adds the missing column in place rather than losing that data.
+   */
+  private migrateNotesContentColumn(): void {
+    const columns = this.db.prepare("pragma table_info(notes)").all() as { name: string }[];
+    if (!columns.some((column) => column.name === "content")) {
+      this.db.exec("alter table notes add column content text not null default ''");
+    }
   }
 
   getRootPath(): string | null {
@@ -408,6 +444,104 @@ export class StarshipDb {
     return { projectId, summary, createdAt, updatedAt: now };
   }
 
+  listNotes(projectId: ProjectId): Note[] {
+    const rows = this.db
+      .prepare(
+        `select id, project_id, text, content, done, created_at, updated_at
+         from notes
+         where project_id = ?
+         order by created_at asc`
+      )
+      .all(projectId) as NoteRow[];
+
+    return rows.map(rowToNote);
+  }
+
+  /**
+   * Undone notes only - a resolved note isn't a pending action item, so it
+   * shouldn't count toward the dashboard's "how hot is this project"
+   * signal. Batched (same shape as getIgnoredProjectPaths) rather than one
+   * query per project.
+   */
+  getUndoneNoteCounts(projectIds: ProjectId[]): Map<string, number> {
+    const uniqueIds = Array.from(new Set(projectIds));
+    if (uniqueIds.length === 0) {
+      return new Map();
+    }
+
+    const placeholders = uniqueIds.map(() => "?").join(", ");
+    const rows = this.db
+      .prepare(
+        `select project_id, count(*) as count
+         from notes
+         where done = 0 and project_id in (${placeholders})
+         group by project_id`
+      )
+      .all(...uniqueIds) as { project_id: string; count: number }[];
+
+    return new Map(rows.map((row) => [row.project_id, row.count]));
+  }
+
+  addNote(input: { projectId: ProjectId; text: string; content: string }): Note {
+    const id = randomUUID();
+    const now = new Date().toISOString();
+
+    this.db
+      .prepare(
+        `insert into notes (id, project_id, text, content, done, created_at, updated_at)
+         values (?, ?, ?, ?, 0, ?, ?)`
+      )
+      .run(id, input.projectId, input.text, input.content, now, now);
+
+    return {
+      id,
+      projectId: input.projectId,
+      text: input.text,
+      content: input.content,
+      done: false,
+      createdAt: now,
+      updatedAt: now
+    };
+  }
+
+  updateNote(noteId: string, input: { text: string; content: string }): Note {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(`update notes set text = ?, content = ?, updated_at = ? where id = ?`)
+      .run(input.text, input.content, now, noteId);
+
+    return this.getNote(noteId);
+  }
+
+  setNoteDone(noteId: string, done: boolean): Note {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(`update notes set done = ?, updated_at = ? where id = ?`)
+      .run(done ? 1 : 0, now, noteId);
+
+    return this.getNote(noteId);
+  }
+
+  deleteNote(noteId: string): void {
+    this.db.prepare(`delete from notes where id = ?`).run(noteId);
+  }
+
+  private getNote(noteId: string): Note {
+    const row = this.db
+      .prepare(
+        `select id, project_id, text, content, done, created_at, updated_at
+         from notes
+         where id = ?`
+      )
+      .get(noteId) as NoteRow | undefined;
+
+    if (!row) {
+      throw new Error(`Note not found: ${noteId}`);
+    }
+
+    return rowToNote(row);
+  }
+
   close(): void {
     this.db.close();
   }
@@ -430,6 +564,34 @@ export const registerIntentHandlers = (db: StarshipDb): void => {
     "intent:saveLedger",
     (_event, request: IntentLedgerInput): IntentLedger =>
       db.saveIntentLedger(request)
+  );
+};
+
+export const registerNotesHandlers = (db: StarshipDb): void => {
+  ipcMain.handle("notes:list", (_event, request: { projectId: string }): Note[] =>
+    db.listNotes(request.projectId)
+  );
+
+  ipcMain.handle(
+    "notes:add",
+    (_event, request: { projectId: string; text: string; content: string }): Note =>
+      db.addNote(request)
+  );
+
+  ipcMain.handle(
+    "notes:update",
+    (_event, request: { noteId: string; text: string; content: string }): Note =>
+      db.updateNote(request.noteId, { text: request.text, content: request.content })
+  );
+
+  ipcMain.handle(
+    "notes:setDone",
+    (_event, request: { noteId: string; done: boolean }): Note =>
+      db.setNoteDone(request.noteId, request.done)
+  );
+
+  ipcMain.handle("notes:delete", (_event, request: { noteId: string }): void =>
+    db.deleteNote(request.noteId)
   );
 };
 
@@ -461,6 +623,16 @@ const rowToActivityLogEntry = (row: ActivityLogRow): ActivityLogEntry => ({
 const rowToSessionBriefing = (row: SessionBriefingRow): SessionBriefing => ({
   projectId: row.project_id,
   summary: row.summary,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at
+});
+
+const rowToNote = (row: NoteRow): Note => ({
+  id: row.id,
+  projectId: row.project_id,
+  text: row.text,
+  content: row.content,
+  done: row.done === 1,
   createdAt: row.created_at,
   updatedAt: row.updated_at
 });

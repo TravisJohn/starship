@@ -14,6 +14,9 @@ export type MissionProject = Project & {
   lastActivityAt: string | null;
   prdSummary: string | null;
   projectLogEntry: ProjectLogEntry | null;
+  sizeBytes: number | null;
+  activityHeatmap: { date: string; count: number }[];
+  undoneNoteCount: number;
 };
 
 export type PrdPhase = {
@@ -54,6 +57,41 @@ export type SessionBriefing = {
   updatedAt: string;
 };
 
+export type Note = {
+  id: string;
+  projectId: ProjectId;
+  text: string;
+  content: string;
+  done: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type NotesListRequest = {
+  projectId: ProjectId;
+};
+
+export type NoteAddRequest = {
+  projectId: ProjectId;
+  text: string;
+  content: string;
+};
+
+export type NoteUpdateRequest = {
+  noteId: string;
+  text: string;
+  content: string;
+};
+
+export type NoteSetDoneRequest = {
+  noteId: string;
+  done: boolean;
+};
+
+export type NoteDeleteRequest = {
+  noteId: string;
+};
+
 export type BriefingGenerateRequest = {
   projectId: ProjectId;
   projectPath: string;
@@ -68,11 +106,20 @@ export type FileMapGenerateRequest = {
   projectPath: string;
 };
 
+export type FileTreeNode = {
+  name: string;
+  path: string;
+  type: "directory" | "file";
+  children?: FileTreeNode[];
+  functions?: string[] | null;
+};
+
 export type FileMapGenerateResponse = {
   html: string;
   fileCount: number;
   edgeCount: number;
   generatedAt: string;
+  tree: FileTreeNode | null;
 };
 
 export type FileMapDownloadRequest = {
@@ -91,6 +138,11 @@ export type ProjectLogSummarizeRequest = {
 
 export type ProjectLogSummarizeResponse = {
   summary: string;
+};
+
+export type LoadingMediaResponse = {
+  animationUrl: string;
+  posterUrl: string;
 };
 
 export type IntentLedgerInput = {
@@ -163,6 +215,43 @@ export type InceptionCreateProjectResponse = {
 
 export type IntentLedgerRequest = {
   projectId: ProjectId;
+};
+
+export type IntentAnnotationRequest = {
+  projectId: ProjectId;
+  projectPath: string;
+  tasks: KanbanTaskDto[];
+};
+
+export type TaskAnnotation = {
+  taskId: string;
+  rationale: string | null;
+  servesIntent: "purpose" | "successCriteria" | "acceptedTradeoffs" | "neverDo" | "none";
+  note: string;
+};
+
+export type IntentAnnotationResult = {
+  perTask: TaskAnnotation[];
+  overall: { verdict: string; concerns: string };
+  generatedAt: string;
+};
+
+export type DiscussMessage = {
+  role: "user" | "assistant";
+  text: string;
+};
+
+export type DiscussFieldRequest = {
+  field: keyof IntentInterview;
+  fieldLabel: string;
+  currentValue: string;
+  history: DiscussMessage[];
+  message: string;
+};
+
+export type DiscussFieldResponse = {
+  reply: string;
+  proposedRewrite: string | null;
 };
 
 export type PtySpawnRequest = {
@@ -304,9 +393,17 @@ export type RendererToMainInvokeMap = {
     request: DashboardSetIgnoredRequest;
     response: MissionProject;
   };
+  "dashboard:refreshProject": {
+    request: { projectId: ProjectId };
+    response: MissionProject;
+  };
   "dashboard:launch": {
     request: DashboardLaunchRequest;
     response: DashboardLaunchResponse;
+  };
+  "assets:getLoadingMedia": {
+    request: void;
+    response: LoadingMediaResponse;
   };
   "project:getPhases": {
     request: ProjectPhasesRequest;
@@ -347,6 +444,34 @@ export type RendererToMainInvokeMap = {
   "intent:saveLedger": {
     request: IntentLedgerInput;
     response: IntentLedger;
+  };
+  "intent:annotate": {
+    request: IntentAnnotationRequest;
+    response: IntentAnnotationResult;
+  };
+  "intent:discuss": {
+    request: DiscussFieldRequest;
+    response: DiscussFieldResponse;
+  };
+  "notes:list": {
+    request: NotesListRequest;
+    response: Note[];
+  };
+  "notes:add": {
+    request: NoteAddRequest;
+    response: Note;
+  };
+  "notes:update": {
+    request: NoteUpdateRequest;
+    response: Note;
+  };
+  "notes:setDone": {
+    request: NoteSetDoneRequest;
+    response: Note;
+  };
+  "notes:delete": {
+    request: NoteDeleteRequest;
+    response: void;
   };
   "inception:renderTemplates": {
     request: InceptionTemplateRenderRequest;
@@ -394,7 +519,11 @@ export type StarshipApi = {
     locateRoot: () => Promise<MissionDashboardState | null>;
     rescan: () => Promise<MissionDashboardState>;
     setIgnored: (request: DashboardSetIgnoredRequest) => Promise<MissionProject>;
+    refreshProject: (request: { projectId: ProjectId }) => Promise<MissionProject>;
     launch: (request: DashboardLaunchRequest) => Promise<DashboardLaunchResponse>;
+  };
+  assets: {
+    getLoadingMedia: () => Promise<LoadingMediaResponse>;
   };
   project: {
     getPhases: (request: ProjectPhasesRequest) => Promise<PrdPhase[]>;
@@ -415,6 +544,15 @@ export type StarshipApi = {
   intent: {
     getLedger: (request: IntentLedgerRequest) => Promise<IntentLedger | null>;
     saveLedger: (request: IntentLedgerInput) => Promise<IntentLedger>;
+    annotate: (request: IntentAnnotationRequest) => Promise<IntentAnnotationResult>;
+    discuss: (request: DiscussFieldRequest) => Promise<DiscussFieldResponse>;
+  };
+  notes: {
+    list: (request: NotesListRequest) => Promise<Note[]>;
+    add: (request: NoteAddRequest) => Promise<Note>;
+    update: (request: NoteUpdateRequest) => Promise<Note>;
+    setDone: (request: NoteSetDoneRequest) => Promise<Note>;
+    delete: (request: NoteDeleteRequest) => Promise<void>;
   };
   inception: {
     renderTemplates: (

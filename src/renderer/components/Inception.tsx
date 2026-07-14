@@ -4,9 +4,11 @@ import type {
   IntentInterview,
   RequirementsInterview
 } from "../../shared/ipc";
+import { DiscussPanel } from "./DiscussPanel";
 
 type InceptionProps = {
   rootPath: string | null;
+  initialInterview: InceptionInterview | null;
   onCancel: () => void;
   onComplete: (interview: InceptionInterview) => void;
 };
@@ -32,13 +34,17 @@ const emptyRequirements: RequirementsInterview = {
 
 export const Inception = ({
   rootPath,
+  initialInterview,
   onCancel,
   onComplete
 }: InceptionProps): JSX.Element => {
   const [step, setStep] = useState<"intent" | "requirements">("intent");
-  const [intent, setIntent] = useState<IntentInterview>(emptyIntent);
-  const [requirements, setRequirements] =
-    useState<RequirementsInterview>(emptyRequirements);
+  const [intent, setIntent] = useState<IntentInterview>(
+    initialInterview?.intent ?? emptyIntent
+  );
+  const [requirements, setRequirements] = useState<RequirementsInterview>(
+    initialInterview?.requirements ?? emptyRequirements
+  );
 
   const intentComplete = useMemo(
     () =>
@@ -88,7 +94,7 @@ export const Inception = ({
         <button
           type="button"
           onClick={onCancel}
-          className="h-8 rounded-md border border-zinc-700 px-3 text-sm font-medium text-zinc-100 hover:border-emerald-400 hover:text-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+          className="h-8 rounded-md border border-zinc-700 px-3 text-sm font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
         >
           Dashboard
         </button>
@@ -137,7 +143,7 @@ const IntentStep = ({
   return (
     <div className="mx-auto grid w-full max-w-5xl grid-cols-1 gap-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
       <div className="pt-1">
-        <p className="text-xs font-medium uppercase tracking-widest text-emerald-300">
+        <p className="text-xs font-medium uppercase tracking-widest text-sky-300">
           Intent first
         </p>
         <h2 className="mt-3 text-2xl font-semibold tracking-normal">
@@ -158,41 +164,81 @@ const IntentStep = ({
           }
         }}
       >
-        <TextArea
-          label="Why should this project exist?"
-          value={intent.purpose}
-          onChange={(value) => setField("purpose", value)}
-          minRows={4}
-        />
-        <TextArea
-          label="What would make this project successful enough to call it real?"
-          value={intent.successCriteria}
-          onChange={(value) => setField("successCriteria", value)}
-          minRows={4}
-        />
-        <TextArea
-          label="What tradeoffs are you already willing to accept?"
-          value={intent.acceptedTradeoffs}
-          onChange={(value) => setField("acceptedTradeoffs", value)}
-          minRows={4}
-        />
-        <TextArea
-          label="What must this project never do or become?"
-          value={intent.neverDo}
-          onChange={(value) => setField("neverDo", value)}
-          minRows={4}
-        />
-        <TextArea
-          label="What should building this teach you?"
-          value={intent.learningGoal}
-          onChange={(value) => setField("learningGoal", value)}
-          minRows={3}
-        />
+        <div>
+          <TextArea
+            label="Why should this project exist?"
+            value={intent.purpose}
+            onChange={(value) => setField("purpose", value)}
+            minRows={4}
+          />
+          <DiscussPanel
+            field="purpose"
+            fieldLabel="Why should this project exist?"
+            currentValue={intent.purpose}
+            onApply={(value) => setField("purpose", value)}
+          />
+        </div>
+        <div>
+          <TextArea
+            label="What would make this project successful enough to call it real?"
+            value={intent.successCriteria}
+            onChange={(value) => setField("successCriteria", value)}
+            minRows={4}
+          />
+          <DiscussPanel
+            field="successCriteria"
+            fieldLabel="What would make this project successful enough to call it real?"
+            currentValue={intent.successCriteria}
+            onApply={(value) => setField("successCriteria", value)}
+          />
+        </div>
+        <div>
+          <TextArea
+            label="What tradeoffs are you already willing to accept?"
+            value={intent.acceptedTradeoffs}
+            onChange={(value) => setField("acceptedTradeoffs", value)}
+            minRows={4}
+          />
+          <DiscussPanel
+            field="acceptedTradeoffs"
+            fieldLabel="What tradeoffs are you already willing to accept?"
+            currentValue={intent.acceptedTradeoffs}
+            onApply={(value) => setField("acceptedTradeoffs", value)}
+          />
+        </div>
+        <div>
+          <TextArea
+            label="What must this project never do or become?"
+            value={intent.neverDo}
+            onChange={(value) => setField("neverDo", value)}
+            minRows={4}
+          />
+          <DiscussPanel
+            field="neverDo"
+            fieldLabel="What must this project never do or become?"
+            currentValue={intent.neverDo}
+            onApply={(value) => setField("neverDo", value)}
+          />
+        </div>
+        <div>
+          <TextArea
+            label="What should building this teach you?"
+            value={intent.learningGoal}
+            onChange={(value) => setField("learningGoal", value)}
+            minRows={3}
+          />
+          <DiscussPanel
+            field="learningGoal"
+            fieldLabel="What should building this teach you?"
+            currentValue={intent.learningGoal}
+            onApply={(value) => setField("learningGoal", value)}
+          />
+        </div>
         <div className="flex justify-end">
           <button
             type="submit"
             disabled={!canContinue}
-            className="h-10 rounded-md bg-emerald-500 px-4 text-sm font-medium text-zinc-950 hover:bg-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-300 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
+            className="h-10 rounded-md bg-sky-500 px-4 text-sm font-medium text-zinc-950 hover:bg-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-300 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
           >
             Requirements
           </button>
@@ -301,16 +347,16 @@ const RequirementsStep = ({
           <button
             type="button"
             onClick={onBack}
-            className="h-10 rounded-md border border-zinc-700 px-4 text-sm font-medium text-zinc-100 hover:border-emerald-400 hover:text-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+            className="h-10 rounded-md border border-zinc-700 px-4 text-sm font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
           >
-            Intent
+            Rewrite Intent
           </button>
           <button
             type="submit"
             disabled={!canComplete}
-            className="h-10 rounded-md bg-emerald-500 px-4 text-sm font-medium text-zinc-950 hover:bg-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-300 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
+            className="h-10 rounded-md bg-sky-500 px-4 text-sm font-medium text-zinc-950 hover:bg-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-300 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
           >
-            Draft Files
+            Submit
           </button>
         </div>
       </form>
@@ -334,7 +380,7 @@ const TextInput = ({
     <input
       value={value}
       onChange={(event) => onChange(event.target.value)}
-      className="mt-2 h-10 w-full rounded-md border border-zinc-800 bg-zinc-900 px-3 text-sm text-zinc-100 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/30"
+      className="mt-2 h-10 w-full rounded-md border border-zinc-800 bg-zinc-900 px-3 text-sm text-zinc-100 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-400/30"
     />
   </label>
 );
@@ -355,7 +401,7 @@ const TextArea = ({
       value={value}
       rows={minRows}
       onChange={(event) => onChange(event.target.value)}
-      className="mt-2 w-full resize-y rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm leading-6 text-zinc-100 outline-none focus:border-emerald-400 focus:ring-2 focus:ring-emerald-400/30"
+      className="mt-2 w-full resize-y rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm leading-6 text-zinc-100 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-400/30"
     />
   </label>
 );

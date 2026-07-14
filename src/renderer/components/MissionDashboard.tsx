@@ -8,6 +8,8 @@ import type {
   Project
 } from "../../shared/ipc";
 import { FileMapOverlay } from "./FileMapOverlay";
+import { LoadingAnimation } from "./LoadingAnimation";
+import { NotesOverlay } from "./NotesOverlay";
 import { ProjectLogOverlay } from "./ProjectLogOverlay";
 import { ProjectSummaryOverlay } from "./ProjectSummaryOverlay";
 import { StatusDot } from "./StatusDot";
@@ -47,13 +49,19 @@ export const MissionDashboard = ({
     Record<string, boolean>
   >({});
   const [fileMapProject, setFileMapProject] = useState<MissionProject | null>(null);
+  const [notesProject, setNotesProject] = useState<MissionProject | null>(null);
   const [projectLogProject, setProjectLogProject] =
     useState<MissionProject | null>(null);
 
   useEffect(() => {
     let cancelled = false;
 
-    void window.starship.dashboard
+    const MIN_LOADING_MS = 2500;
+    const minDelay = new Promise<void>((resolve) => {
+      window.setTimeout(resolve, MIN_LOADING_MS);
+    });
+
+    const fetchState = window.starship.dashboard
       .getState()
       .then((state) => {
         if (!cancelled) {
@@ -64,12 +72,13 @@ export const MissionDashboard = ({
         if (!cancelled) {
           setError(stringifyError(loadError));
         }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setLoading(false);
-        }
       });
+
+    void Promise.all([fetchState, minDelay]).then(() => {
+      if (!cancelled) {
+        setLoading(false);
+      }
+    });
 
     return () => {
       cancelled = true;
@@ -173,6 +182,38 @@ export const MissionDashboard = ({
     setFileMapProject(project);
   };
 
+  const openNotes = (project: MissionProject): void => {
+    appendActivity({ eventType: "notes_opened", projectId: project.id });
+    setNotesProject(project);
+  };
+
+  // Notes are edited inside the overlay with no live push back to the
+  // dashboard row - refresh just that one row's data (cached size, so this
+  // stays cheap) when the overlay closes, so the pending-note badge
+  // reflects whatever changed without requiring a full Rescan.
+  const closeNotes = (): void => {
+    const project = notesProject;
+    setNotesProject(null);
+    if (!project) {
+      return;
+    }
+
+    void window.starship.dashboard
+      .refreshProject({ projectId: project.id })
+      .then((updated) => {
+        setDashboard((current) => ({
+          ...current,
+          projects: current.projects.map((item) =>
+            item.id === updated.id ? updated : item
+          )
+        }));
+      })
+      .catch(() => {
+        // Non-critical - the badge just stays as it was; next full
+        // load/rescan will catch up.
+      });
+  };
+
   const openProjectLog = (project: MissionProject): void => {
     appendActivity({ eventType: "project_log_opened", projectId: project.id });
     setProjectLogProject(project);
@@ -204,9 +245,11 @@ export const MissionDashboard = ({
 
   if (loading) {
     return (
-      <section className="flex h-full min-h-0 items-center justify-center bg-zinc-950 text-zinc-100">
-        <p className="text-sm text-zinc-400">Loading dashboard</p>
-      </section>
+      <LoadingAnimation
+        label="Loading dashboard"
+        className="h-full bg-black text-zinc-100"
+        mediaClassName="h-48 w-80 max-w-[72vw]"
+      />
     );
   }
 
@@ -226,7 +269,7 @@ export const MissionDashboard = ({
           <button
             type="button"
             onClick={() => void locateRoot()}
-            className="h-10 rounded-md bg-emerald-500 px-4 text-sm font-medium text-zinc-950 hover:bg-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+            className="h-10 rounded-md bg-sky-500 px-4 text-sm font-medium text-zinc-950 hover:bg-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-300"
           >
             Locate Root
           </button>
@@ -254,10 +297,10 @@ export const MissionDashboard = ({
             <button
               type="button"
               onClick={() => setShowIgnored((current) => !current)}
-              className={`h-8 rounded-md border px-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-emerald-300 ${
+              className={`h-8 rounded-md border px-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-sky-300 ${
                 showIgnored
-                  ? "border-emerald-500/70 text-emerald-200"
-                  : "border-zinc-700 text-zinc-100 hover:border-emerald-400 hover:text-emerald-200"
+                  ? "border-sky-500/70 text-sky-200"
+                  : "border-zinc-700 text-zinc-100 hover:border-sky-400 hover:text-sky-200"
               }`}
             >
               Show ignored ({ignoredCount})
@@ -266,21 +309,21 @@ export const MissionDashboard = ({
           <button
             type="button"
             onClick={() => onNewProject(dashboard.rootPath!)}
-            className="h-9 rounded-md bg-emerald-500 px-3 text-sm font-medium text-zinc-950 hover:bg-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+            className="h-9 rounded-md bg-sky-500 px-3 text-sm font-medium text-zinc-950 hover:bg-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-300"
           >
             New Project
           </button>
           <button
             type="button"
             onClick={() => void rescan()}
-            className="h-8 rounded-md border border-zinc-700 px-3 text-sm font-medium text-zinc-100 hover:border-emerald-400 hover:text-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+            className="h-8 rounded-md border border-zinc-700 px-3 text-sm font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
           >
             Rescan
           </button>
           <button
             type="button"
             onClick={() => void locateRoot()}
-            className="h-8 rounded-md border border-zinc-700 px-3 text-sm font-medium text-zinc-100 hover:border-emerald-400 hover:text-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+            className="h-8 rounded-md border border-zinc-700 px-3 text-sm font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
           >
             Re-point Root
           </button>
@@ -303,22 +346,28 @@ export const MissionDashboard = ({
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="min-w-full table-fixed border-separate border-spacing-0 text-left text-sm">
+            <table className="w-full table-fixed border-separate border-spacing-0 text-left text-sm">
               <thead className="text-xs uppercase text-zinc-500">
                 <tr>
-                  <th className="border-b border-zinc-800 px-3 py-2 font-medium">
+                  <th className="w-56 overflow-hidden border-b border-zinc-800 px-3 py-2 font-medium">
                     Project
                   </th>
-                  <th className="w-48 border-b border-zinc-800 px-3 py-2 font-medium">
+                  <th className="w-40 overflow-hidden border-b border-zinc-800 px-3 py-2 font-medium">
                     Last Activity
                   </th>
-                  <th className="w-24 border-b border-zinc-800 px-3 py-2 font-medium">
+                  <th className="w-20 overflow-hidden border-b border-zinc-800 px-3 py-2 font-medium">
+                    Size
+                  </th>
+                  <th className="w-32 overflow-hidden border-b border-zinc-800 px-3 py-2 font-medium">
+                    Activity
+                  </th>
+                  <th className="w-24 overflow-hidden border-b border-zinc-800 px-3 py-2 font-medium">
                     Status
                   </th>
-                  <th className="w-28 border-b border-zinc-800 px-3 py-2 font-medium">
+                  <th className="w-16 overflow-hidden border-b border-zinc-800 px-3 py-2 font-medium">
                     Ignore
                   </th>
-                  <th className="w-[26rem] border-b border-zinc-800 px-3 py-2 font-medium">
+                  <th className="w-[26rem] overflow-hidden border-b border-zinc-800 px-3 py-2 font-medium">
                     Actions
                   </th>
                 </tr>
@@ -329,7 +378,7 @@ export const MissionDashboard = ({
                     key={project.path}
                     className={project.ignored ? "text-zinc-500" : "text-zinc-100"}
                   >
-                    <td className="border-b border-zinc-900 px-3 py-3">
+                    <td className="w-56 overflow-hidden border-b border-zinc-900 px-3 py-3">
                       <div className="min-w-0">
                         <p className="truncate font-medium">{project.name}</p>
                         <p className="mt-1 truncate text-xs text-zinc-500">
@@ -346,7 +395,7 @@ export const MissionDashboard = ({
                                 openSummary(project);
                               }
                             }}
-                            className="mt-1 cursor-pointer truncate text-xs text-emerald-200 hover:text-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                            className="mt-1 cursor-pointer truncate text-xs text-sky-200 hover:text-sky-100 focus:outline-none focus:ring-2 focus:ring-sky-300"
                           >
                             {project.prdSummary}
                           </p>
@@ -362,17 +411,23 @@ export const MissionDashboard = ({
                                 openProjectLog(project);
                               }
                             }}
-                            className="mt-1 cursor-pointer truncate text-xs text-emerald-200 hover:text-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                            className="mt-1 cursor-pointer truncate text-xs text-sky-200 hover:text-sky-100 focus:outline-none focus:ring-2 focus:ring-sky-300"
                           >
                             {project.projectLogEntry.title}
                           </p>
                         ) : null}
                       </div>
                     </td>
-                    <td className="border-b border-zinc-900 px-3 py-3 text-zinc-300">
+                    <td className="w-40 overflow-hidden border-b border-zinc-900 px-3 py-3 text-zinc-300">
                       {formatLastActivity(project.lastActivityAt)}
                     </td>
-                    <td className="border-b border-zinc-900 px-3 py-3">
+                    <td className="w-20 overflow-hidden border-b border-zinc-900 px-3 py-3 text-zinc-300">
+                      {formatBytes(project.sizeBytes)}
+                    </td>
+                    <td className="w-32 overflow-hidden border-b border-zinc-900 px-3 py-3">
+                      <ActivityHeatmap days={project.activityHeatmap} />
+                    </td>
+                    <td className="w-24 overflow-hidden border-b border-zinc-900 px-3 py-3">
                       <div className="flex items-center gap-2">
                         <StatusDot status={statusByProjectId[project.id] ?? "idle"} />
                         <span className="text-xs text-zinc-400">
@@ -380,26 +435,24 @@ export const MissionDashboard = ({
                         </span>
                       </div>
                     </td>
-                    <td className="border-b border-zinc-900 px-3 py-3">
-                      <label className="inline-flex items-center gap-2 text-xs text-zinc-300">
-                        <input
-                          type="checkbox"
-                          checked={project.ignored}
-                          disabled={busyPath === project.path}
-                          onChange={() => void setIgnored(project)}
-                          className="h-4 w-4 rounded border-zinc-700 bg-zinc-900 text-emerald-500 focus:ring-emerald-300"
-                        />
-                        Ignore
-                      </label>
+                    <td className="w-16 overflow-hidden border-b border-zinc-900 px-3 py-3">
+                      <input
+                        type="checkbox"
+                        checked={project.ignored}
+                        disabled={busyPath === project.path}
+                        onChange={() => void setIgnored(project)}
+                        aria-label="Ignore"
+                        className="h-4 w-4 rounded border-zinc-700 bg-zinc-900 text-sky-500 focus:ring-sky-300"
+                      />
                     </td>
-                    <td className="border-b border-zinc-900 px-3 py-3">
+                    <td className="w-[26rem] overflow-hidden border-b border-zinc-900 px-3 py-3">
                       <div className="flex flex-wrap items-center gap-2">
                         <select
                           value={agentByProjectId[project.id] ?? "claude"}
                           onChange={(event) =>
                             selectAgent(project.id, event.target.value as AgentKind)
                           }
-                          className="h-8 rounded-md border border-zinc-700 bg-zinc-950 px-2 text-xs font-medium text-zinc-100 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                          className="h-8 rounded-md border border-zinc-700 bg-zinc-950 px-2 text-xs font-medium text-zinc-100 focus:outline-none focus:ring-2 focus:ring-sky-300"
                         >
                           <option value="claude">Claude</option>
                           <option value="codex" disabled>
@@ -416,7 +469,7 @@ export const MissionDashboard = ({
                             onChange={(event) =>
                               setSkipPermissions(project.id, event.target.checked)
                             }
-                            className="h-4 w-4 rounded border-zinc-700 bg-zinc-900 text-emerald-500 focus:ring-emerald-300"
+                            className="h-4 w-4 rounded border-zinc-700 bg-zinc-900 text-sky-500 focus:ring-sky-300"
                           />
                           Skip permissions
                         </label>
@@ -429,10 +482,10 @@ export const MissionDashboard = ({
                               : undefined
                           }
                           onClick={() => openIntent(project)}
-                          className={`h-8 rounded-md border px-3 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-emerald-300 ${
+                          className={`h-8 rounded-md border px-3 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-sky-300 ${
                             project.lastActivityAt !== null
                               ? "cursor-not-allowed border-zinc-800 text-zinc-500 opacity-60"
-                              : "border-zinc-700 text-zinc-100 hover:border-emerald-400 hover:text-emerald-200"
+                              : "border-zinc-700 text-zinc-100 hover:border-sky-400 hover:text-sky-200"
                           }`}
                         >
                           Intent
@@ -440,16 +493,35 @@ export const MissionDashboard = ({
                         <button
                           type="button"
                           onClick={() => void launchProject(project)}
-                          className="h-8 rounded-md border border-zinc-700 px-3 text-xs font-medium text-zinc-100 hover:border-emerald-400 hover:text-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                          className="h-8 rounded-md border border-zinc-700 px-3 text-xs font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
                         >
                           Launch
                         </button>
                         <button
                           type="button"
                           onClick={() => openFileMap(project)}
-                          className="h-8 rounded-md border border-zinc-700 px-3 text-xs font-medium text-zinc-100 hover:border-emerald-400 hover:text-emerald-200 focus:outline-none focus:ring-2 focus:ring-emerald-300"
+                          className="h-8 rounded-md border border-zinc-700 px-3 text-xs font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
                         >
                           File Map
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openNotes(project)}
+                          className="flex h-8 items-center gap-1.5 rounded-md border border-zinc-700 px-3 text-xs font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                        >
+                          Notes
+                          {project.undoneNoteCount > 0 ? (
+                            <span
+                              title={`${project.undoneNoteCount} pending note${
+                                project.undoneNoteCount === 1 ? "" : "s"
+                              }`}
+                              className={`flex h-4 min-w-[1rem] items-center justify-center rounded-full px-1 text-[10px] font-semibold ${noteCountBadgeClasses(
+                                project.undoneNoteCount
+                              )}`}
+                            >
+                              {project.undoneNoteCount}
+                            </span>
+                          ) : null}
                         </button>
                       </div>
                     </td>
@@ -468,6 +540,10 @@ export const MissionDashboard = ({
         project={fileMapProject}
         onClose={() => setFileMapProject(null)}
       />
+      <NotesOverlay
+        project={notesProject}
+        onClose={closeNotes}
+      />
       <ProjectLogOverlay
         project={projectLogProject}
         onClose={() => setProjectLogProject(null)}
@@ -485,6 +561,39 @@ const applyDashboardState = (
   setError(state.scanError ?? null);
 };
 
+/**
+ * Green -> amber -> red "how much is piling up here" signal for pending
+ * (undone) notes - a resolved note doesn't count, so this is specifically
+ * an action-item temperature, not a raw note count.
+ */
+const noteCountBadgeClasses = (count: number): string => {
+  if (count >= 5) {
+    return "bg-red-500 text-zinc-950";
+  }
+  if (count >= 3) {
+    return "bg-amber-500 text-zinc-950";
+  }
+  return "bg-emerald-500 text-zinc-950";
+};
+
+const formatBytes = (bytes: number | null): string => {
+  if (bytes === null) {
+    return "unknown";
+  }
+
+  if (bytes === 0) {
+    return "0 KB";
+  }
+
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const exponent = Math.min(
+    Math.floor(Math.log(bytes) / Math.log(1024)),
+    units.length - 1
+  );
+  const value = bytes / 1024 ** exponent;
+  return `${exponent === 0 ? value : value.toFixed(1)} ${units[exponent]}`;
+};
+
 const formatLastActivity = (lastActivityAt: string | null): string => {
   if (!lastActivityAt) {
     return "never";
@@ -500,6 +609,32 @@ const formatLastActivity = (lastActivityAt: string | null): string => {
     timeStyle: "short"
   }).format(date);
 };
+
+const HEATMAP_LEVELS = [
+  "bg-zinc-800",
+  "bg-sky-900",
+  "bg-sky-700",
+  "bg-sky-500"
+];
+
+const ActivityHeatmap = ({
+  days
+}: {
+  days: MissionProject["activityHeatmap"];
+}): JSX.Element => (
+  <div className="flex items-center gap-1">
+    {days.map((day) => {
+      const level = day.count === 0 ? 0 : Math.min(day.count, HEATMAP_LEVELS.length - 1);
+      return (
+        <span
+          key={day.date}
+          title={`${day.date}: ${day.count} session${day.count === 1 ? "" : "s"}`}
+          className={`h-3 w-3 rounded-sm ${HEATMAP_LEVELS[level]}`}
+        />
+      );
+    })}
+  </div>
+);
 
 const stringifyError = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);

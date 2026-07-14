@@ -1,3 +1,5 @@
+import { LoadingAnimation } from "./LoadingAnimation";
+
 type SessionBriefingScreenProps = {
   projectName: string;
   status: "summarizing" | "ready";
@@ -25,7 +27,11 @@ export const SessionBriefingScreen = ({
 
         <div className="mt-4 min-h-[4rem] text-sm leading-6 text-zinc-200">
           {status === "summarizing" ? (
-            <p className="text-zinc-400">Summarizing what happened…</p>
+            <LoadingAnimation
+              label="Summarizing what happened"
+              className="h-36"
+              mediaClassName="h-28 w-48 max-w-full"
+            />
           ) : (
             <p>{summary}</p>
           )}
@@ -35,7 +41,7 @@ export const SessionBriefingScreen = ({
           type="button"
           onClick={onContinue}
           disabled={status === "summarizing"}
-          className="mt-6 h-9 rounded-md bg-emerald-500 px-4 text-sm font-medium text-zinc-950 hover:bg-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-300 disabled:cursor-not-allowed disabled:opacity-50"
+          className="mt-6 h-9 rounded-md bg-sky-500 px-4 text-sm font-medium text-zinc-950 hover:bg-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-300 disabled:cursor-not-allowed disabled:opacity-50"
         >
           Continue to Dashboard
         </button>
