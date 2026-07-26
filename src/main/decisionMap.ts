@@ -784,21 +784,29 @@ export const generateDecisionMap = async (
       )
     });
 
+    // Parses + fully validates a raw response (same pipeline the main flow
+    // below uses) so shouldCache's decision reflects the FINAL decision
+    // count, not just whether the model returned SOME JSON - a response
+    // whose decisions all fail evidence verification is exactly the kind of
+    // bad roll that shouldn't get frozen into the cache either.
+    const parseAndValidate = (result: string): DecisionRecordEntry[] =>
+      buildValidatedDecisions(
+        extractDecisionResponse(result) ?? [],
+        bounded.logs,
+        bounded.clusters,
+        bounded.excerpts,
+        sessionDates,
+        ledger !== null
+      );
+
     const raw = await runHeadlessClaude(db, {
       cacheNamespace: "decision-map",
       prompt,
-      cwd: getHeadlessCwd()
+      cwd: getHeadlessCwd(),
+      shouldCache: (result) => parseAndValidate(result).length > 0
     });
 
-    const rawDecisions = extractDecisionResponse(raw) ?? [];
-    const decisions = buildValidatedDecisions(
-      rawDecisions,
-      bounded.logs,
-      bounded.clusters,
-      bounded.excerpts,
-      sessionDates,
-      ledger !== null
-    );
+    const decisions = parseAndValidate(raw);
 
     return {
       decisions,

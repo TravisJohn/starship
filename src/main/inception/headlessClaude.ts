@@ -8,6 +8,17 @@ type HeadlessClaudeRequest = {
   cacheNamespace: string;
   prompt: string;
   cwd: string;
+  /**
+   * Called with the raw result before it's persisted to the cache; return
+   * false to skip caching. Content-hash caching means an identical prompt
+   * always maps to the same cache key - without this, one unlucky roll
+   * (the model returning a degenerate empty/unparseable result on a call
+   * that should have found real decisions) would freeze that empty result
+   * permanently, since every future click on unchanged data would keep
+   * hitting the same cached miss instead of ever retrying. Defaults to
+   * always caching, so every existing caller's behavior is unchanged.
+   */
+  shouldCache?: (result: string) => boolean;
 };
 
 type ClaudeOutput = {
@@ -27,7 +38,9 @@ export const runHeadlessClaude = async (
   }
 
   const result = await spawnClaude(request.prompt, request.cwd);
-  db.saveHeadlessCache(cacheKey, result);
+  if (request.shouldCache?.(result) ?? true) {
+    db.saveHeadlessCache(cacheKey, result);
+  }
   return result;
 };
 
