@@ -708,6 +708,49 @@ const describeExtractionError = (
 ): string =>
   `${stringifyError(error)} - ${logCount} log file(s), ${clusterCount} reasoning cluster(s), and ${excerptCount} transcript excerpt(s) were found but couldn't be structured into decisions this time.`;
 
+type CandidateCounts = { logs: number; clusters: number; excerpts: number };
+
+/**
+ * The real enforcement of "never render zero-from-non-empty as a valid
+ * result": by the time this is called, real candidates are guaranteed to
+ * have existed (both pipelines already returned emptyDecisionRecordResult
+ * earlier when there were none at all). If the final, fully-validated
+ * decision list still comes out empty, that's a failed extraction, not an
+ * honest "nothing to report" - a demonstrated real failure mode (a 0/7/12/13
+ * spread across identical NoFlightZone input), not a hypothetical one.
+ * Surfaced as extractionError so the artifact reads "extraction failed, try
+ * again" rather than silently implying nothing decision-worthy happened.
+ */
+const finalizeResult = (
+  decisions: DecisionRecordEntry[],
+  logs: ProjectLogFile[],
+  transcripts: { mtimeMs: number }[],
+  candidateCounts: CandidateCounts,
+  generatedAt: string
+): DecisionRecordResult => {
+  if (decisions.length === 0) {
+    return {
+      decisions: [],
+      coverage: {
+        ...computeCoverage([], logs, transcripts),
+        extractionError: describeExtractionError(
+          new Error("The extraction pipeline returned no decisions that passed validation"),
+          candidateCounts.logs,
+          candidateCounts.clusters,
+          candidateCounts.excerpts
+        )
+      },
+      generatedAt
+    };
+  }
+
+  return {
+    decisions,
+    coverage: { ...computeCoverage(decisions, logs, transcripts), extractionError: null },
+    generatedAt
+  };
+};
+
 type DecisionCandidates = {
   logs: ProjectLogFile[];
   transcripts: { path: string; mtimeMs: number }[];
@@ -764,13 +807,14 @@ const emptyDecisionRecordResult = (generatedAt: string): DecisionRecordResult =>
 });
 
 /**
- * The whole project's decision history, sourced from its own git-tracked
- * logs (the spine) plus selective transcript reading that fills one named
- * gap: decisions that arose from a direct question mid-session and never
- * reached a log entry. One click-triggered, cached headless call per
- * generation - never a sweep of raw transcript text, never a loop.
+ * The original single-combined-call approach: everything (logs, clusters,
+ * excerpts) in one ~250K-character payload, one headless call. Retired as
+ * the live path after a real comparison against NoFlightZone showed a
+ * 0/7/12/13 decision-count spread on unchanged input - kept for reference
+ * and comparison, not wired into the IPC handler. See generateDecisionMap
+ * for the fan-out-plus-merge approach that replaced it.
  */
-export const generateDecisionMap = async (
+export const generateDecisionMapSingleCall = async (
   db: StarshipDb,
   request: DecisionMapGenerateRequest
 ): Promise<DecisionRecordResult> => {
@@ -781,6 +825,7 @@ export const generateDecisionMap = async (
     return emptyDecisionRecordResult(generatedAt);
   }
   const { logs, transcripts, clusters, excerpts, ledger, sessionDates } = candidates;
+  const candidateCounts: CandidateCounts = { logs: logs.length, clusters: clusters.length, excerpts: excerpts.length };
 
   // Bound BEFORE building the prompt, and reuse the exact same bounded
   // arrays for evidence validation below - whatever the model was actually
@@ -788,7 +833,7 @@ export const generateDecisionMap = async (
   const bounded = boundForPrompt(logs, clusters, excerpts);
 
   try {
-    const prompt = fillPromptTemplate(readPromptTemplate(), {
+    const prompt = fillPromptTemplate(readPromptTemplate("decision-map.md"), {
       payload_json: JSON.stringify(
         {
           intentLedger: ledger
@@ -840,11 +885,7 @@ export const generateDecisionMap = async (
 
     const decisions = parseAndValidate(raw);
 
-    return {
-      decisions,
-      coverage: { ...computeCoverage(decisions, logs, transcripts), extractionError: null },
-      generatedAt
-    };
+    return finalizeResult(decisions, logs, transcripts, candidateCounts, generatedAt);
   } catch (error) {
     return {
       decisions: [],
@@ -935,7 +976,7 @@ const extractSliceDecisions = async (
   ledger: IntentLedger | null,
   slice: DecisionCandidateSlice
 ): Promise<RawDecision[]> => {
-  const prompt = fillPromptTemplate(readPromptTemplate(), {
+  const prompt = fillPromptTemplate(readPromptTemplate("decision-map.md"), {
     payload_json: buildSlicePayload(ledger, slice)
   });
 
@@ -949,17 +990,65 @@ const extractSliceDecisions = async (
   return extractDecisionResponse(raw) ?? [];
 };
 
+const MERGE_PROMPT_FILE = "decision-map-merge.md";
+
+const buildMergePayload = (candidates: RawDecision[]): string =>
+  JSON.stringify({ candidates }, null, 2);
+
 /**
- * Experimental alternative to generateDecisionMap: fans out into one
- * headless call per log file plus one call for transcript-derived material,
- * instead of a single combined call, on the theory that a model given less
- * to process per call misses fewer decisions crammed into one dense source
- * region (a real comparison found two such misses against the single-call
- * approach). Not wired into the IPC handler - this exists to compare
- * extraction yield against generateDecisionMap on real project data before
- * deciding whether the extra headless calls per generation are worth it.
+ * Deduplicates and combines candidates extracted independently across
+ * slices with no visibility into each other (the same underlying decision
+ * often gets extracted more than once when multiple files/sessions mention
+ * it - a real run found the include-list decision extracted 4 separate
+ * times). Operates ONLY on the already-extracted candidate JSON, never
+ * re-reading source files - a small, already-structured input is exactly
+ * why this pass should be more stable than the single large combined call
+ * was. Falls back to the pre-merge candidates unchanged if the merge call
+ * itself comes back empty - losing dedup is far better than losing every
+ * real decision the fan-out pass already found.
  */
-export const generateDecisionMapFannedOut = async (
+const mergeDecisionCandidates = async (
+  db: StarshipDb,
+  candidates: RawDecision[]
+): Promise<RawDecision[]> => {
+  // Nothing to deduplicate with 0 or 1 candidates - skip the headless call
+  // entirely rather than spending one on a batch that can't have a duplicate.
+  if (candidates.length <= 1) {
+    return candidates;
+  }
+
+  const prompt = fillPromptTemplate(readPromptTemplate(MERGE_PROMPT_FILE), {
+    payload_json: buildMergePayload(candidates)
+  });
+
+  const raw = await runHeadlessClaude(db, {
+    cacheNamespace: "decision-map:merge",
+    prompt,
+    cwd: getHeadlessCwd(),
+    shouldCache: (result) => (extractDecisionResponse(result) ?? []).length > 0
+  });
+
+  const merged = extractDecisionResponse(raw) ?? [];
+  return merged.length > 0 ? merged : candidates;
+};
+
+/**
+ * The whole project's decision history, sourced from its own git-tracked
+ * logs (the spine) plus selective transcript reading that fills one named
+ * gap: decisions that arose from a direct question mid-session and never
+ * reached a log entry.
+ *
+ * Fans out into one headless call per log file plus one call for
+ * transcript-derived material, instead of a single combined call - a real
+ * comparison found the combined approach misses decisions crammed into one
+ * dense source region, because attention gets diluted across ~250K
+ * characters. A merge pass then deduplicates across slices (each slice has
+ * no visibility into what any other slice found - the same decision often
+ * surfaces from more than one source), before the usual evidence validation
+ * runs once against the full project context. See
+ * generateDecisionMapSingleCall for the retired single-call approach.
+ */
+export const generateDecisionMap = async (
   db: StarshipDb,
   request: DecisionMapGenerateRequest
 ): Promise<DecisionRecordResult> => {
@@ -970,6 +1059,7 @@ export const generateDecisionMapFannedOut = async (
     return emptyDecisionRecordResult(generatedAt);
   }
   const { logs, transcripts, clusters, excerpts, ledger, sessionDates } = candidates;
+  const candidateCounts: CandidateCounts = { logs: logs.length, clusters: clusters.length, excerpts: excerpts.length };
 
   const slices = buildCandidateSlices(logs, clusters, excerpts);
 
@@ -977,8 +1067,14 @@ export const generateDecisionMapFannedOut = async (
     const rawDecisionLists = await Promise.all(
       slices.map((slice) => extractSliceDecisions(db, ledger, slice))
     );
+    // isRecapOnly candidates are dropped before merge - no reason to spend
+    // the merge pass's attention on something guaranteed to be rejected, or
+    // risk it getting folded into a legitimate decision's evidence.
+    const rawCandidates = rawDecisionLists.flat().filter((raw) => !raw.isRecapOnly);
+    const mergedCandidates = await mergeDecisionCandidates(db, rawCandidates);
+
     const decisions = buildValidatedDecisions(
-      rawDecisionLists.flat(),
+      mergedCandidates,
       logs,
       clusters,
       excerpts,
@@ -986,11 +1082,7 @@ export const generateDecisionMapFannedOut = async (
       ledger !== null
     );
 
-    return {
-      decisions,
-      coverage: { ...computeCoverage(decisions, logs, transcripts), extractionError: null },
-      generatedAt
-    };
+    return finalizeResult(decisions, logs, transcripts, candidateCounts, generatedAt);
   } catch (error) {
     return {
       decisions: [],
@@ -1008,9 +1100,9 @@ const stripCodeFence = (value: string): string => {
   return match ? match[1].trim() : value;
 };
 
-const readPromptTemplate = (): string => {
+const readPromptTemplate = (fileName: string): string => {
   const promptDir = process.env.STARSHIP_PROMPT_DIR ?? path.join(getAppRoot(), "prompts");
-  const filePath = path.join(promptDir, "decision-map.md");
+  const filePath = path.join(promptDir, fileName);
 
   if (!fs.existsSync(filePath)) {
     throw new Error(`Prompt template missing: ${filePath}`);
@@ -1082,7 +1174,10 @@ const renderErrorBanner = (coverage: DecisionRecordCoverage): string =>
     : "";
 
 export const renderDecisionMapHtml = (result: DecisionRecordResult, projectName: string): string => {
-  const data = serializeJsonForScript({ decisions: result.decisions });
+  const data = serializeJsonForScript({
+    decisions: result.decisions,
+    hasError: result.coverage.extractionError !== null
+  });
 
   return `<!doctype html>
 <html lang="en">
@@ -1286,7 +1381,9 @@ export const renderDecisionMapHtml = (result: DecisionRecordResult, projectName:
       Array.from(modesEl.children).forEach((btn) => btn.classList.toggle("active", btn.dataset.mode === currentMode));
 
       if (data.decisions.length === 0) {
-        stage.innerHTML = '<div class="empty">No decisions captured yet - this fills in as sessions run and the project\\'s logs grow.</div>';
+        stage.innerHTML = data.hasError
+          ? '<div class="empty">Extraction failed - try again.</div>'
+          : '<div class="empty">No decisions captured yet - this fills in as sessions run and the project\\'s logs grow.</div>';
         return;
       }
 

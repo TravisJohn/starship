@@ -21,7 +21,7 @@ Do not extract a decision unless the source material itself states BOTH what was
 4. **A decision recapped from an earlier session belongs to that session.** If an excerpt or cluster is presented as recalling or summarizing a decision that was already made before now, rather than reasoning happening in the moment, set `isRecapOnly: true` on it. It will be discarded either way, but flag it honestly rather than inventing a fresh-sounding justification to make it look native to this material.
 5. **Collapse repeats.** A `reasoningClusters` entry already represents every work item that shared one rationale - use its `occurrenceCount` as `collapsed` when the decision comes from a cluster. Never emit one decision per repeated item.
 
-A record of 8 true decisions is worth more than 33 with plausible stories attached. Under-emitting is the correct failure mode - when in doubt, leave it out.
+A record of 8 true decisions is worth more than 33 with plausible stories attached - don't invent an alternative or a reason that isn't really there. But a genuine decision sitting in front of you, with a real stated alternative and a real stated reason, should not be skipped out of excess caution. Apply the five rules above precisely; don't extend them further than they say, and don't treat "I'm not fully certain" as a reason to report nothing when the material actually supports a decision.
 
 ## Fields
 

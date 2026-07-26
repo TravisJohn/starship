@@ -41,7 +41,7 @@ import {
   boundForPrompt,
   findDecisionLanguageExcerpts,
   generateDecisionMap,
-  generateDecisionMapFannedOut,
+  generateDecisionMapSingleCall,
   PROMPT_PAYLOAD_BUDGET
 } from "./decisionMap";
 import { runHeadlessClaude } from "./inception/headlessClaude";
@@ -59,6 +59,7 @@ beforeEach(() => {
   // runHeadlessClaude call IS the JSON payload, directly JSON.parse-able by
   // tests that need to inspect what was actually sent to the model.
   fs.writeFileSync(path.join(tempDir, "decision-map.md"), "{{payload_json}}", "utf8");
+  fs.writeFileSync(path.join(tempDir, "decision-map-merge.md"), "{{payload_json}}", "utf8");
   vi.mocked(findAllTranscriptsForProject).mockReset();
   vi.mocked(runHeadlessClaude).mockReset();
 });
@@ -127,12 +128,12 @@ const mockDecisions = (decisions: unknown[]): void => {
   vi.mocked(runHeadlessClaude).mockResolvedValue(JSON.stringify({ decisions }));
 };
 
-describe("generateDecisionMap", () => {
+describe("generateDecisionMapSingleCall", () => {
   it("returns an empty record with no headless call when there are no logs or transcripts", async () => {
     vi.mocked(findAllTranscriptsForProject).mockReturnValue([]);
     const db = makeDb(ledger);
 
-    const result = await generateDecisionMap(db, { projectId: "proj-1", projectPath: tempDir });
+    const result = await generateDecisionMapSingleCall(db, { projectId: "proj-1", projectPath: tempDir });
 
     expect(result.decisions).toEqual([]);
     expect(result.coverage.hasProjectLogs).toBe(false);
@@ -145,7 +146,7 @@ describe("generateDecisionMap", () => {
     vi.mocked(findAllTranscriptsForProject).mockReturnValue([{ path: transcriptPath, mtimeMs: 1 }]);
     const db = makeDb(ledger);
 
-    const result = await generateDecisionMap(db, { projectId: "proj-1", projectPath: tempDir });
+    const result = await generateDecisionMapSingleCall(db, { projectId: "proj-1", projectPath: tempDir });
 
     expect(result.decisions).toEqual([]);
     expect(runHeadlessClaude).not.toHaveBeenCalled();
@@ -163,7 +164,7 @@ describe("generateDecisionMap", () => {
     mockDecisions([]);
 
     const db = makeDb(ledger);
-    await generateDecisionMap(db, { projectId: "proj-1", projectPath: tempDir });
+    await generateDecisionMapSingleCall(db, { projectId: "proj-1", projectPath: tempDir });
 
     const prompt = vi.mocked(runHeadlessClaude).mock.calls[0][1].prompt;
     const payload = JSON.parse(prompt);
@@ -200,7 +201,7 @@ describe("generateDecisionMap", () => {
     ]);
 
     const db = makeDb(ledger);
-    const result = await generateDecisionMap(db, { projectId: "proj-1", projectPath: tempDir });
+    const result = await generateDecisionMapSingleCall(db, { projectId: "proj-1", projectPath: tempDir });
 
     expect(result.decisions).toHaveLength(1);
     expect(result.decisions[0].chose).toBe("nba_api");
@@ -227,7 +228,7 @@ describe("generateDecisionMap", () => {
     ]);
 
     const db = makeDb(ledger);
-    const result = await generateDecisionMap(db, { projectId: "proj-1", projectPath: tempDir });
+    const result = await generateDecisionMapSingleCall(db, { projectId: "proj-1", projectPath: tempDir });
 
     expect(result.decisions).toEqual([]);
   });
@@ -263,7 +264,7 @@ describe("generateDecisionMap", () => {
     ]);
 
     const db = makeDb(ledger);
-    const result = await generateDecisionMap(db, { projectId: "proj-1", projectPath: tempDir });
+    const result = await generateDecisionMapSingleCall(db, { projectId: "proj-1", projectPath: tempDir });
 
     const includeList = result.decisions.find((d) => d.chose === "Include-list");
     const excludeList = result.decisions.find((d) => d.chose === "Exclude-list (003 only)");
@@ -298,7 +299,7 @@ describe("generateDecisionMap", () => {
     ]);
 
     const db = makeDb(ledger);
-    const result = await generateDecisionMap(db, { projectId: "proj-1", projectPath: tempDir });
+    const result = await generateDecisionMapSingleCall(db, { projectId: "proj-1", projectPath: tempDir });
 
     expect(result.coverage.hasProjectLogs).toBe(false);
     expect(result.coverage.fromLogs).toBe(0);
@@ -315,7 +316,7 @@ describe("generateDecisionMap", () => {
     mockDecisions([]);
 
     const db = makeDb(ledger);
-    const result = await generateDecisionMap(db, { projectId: "proj-1", projectPath: tempDir });
+    const result = await generateDecisionMapSingleCall(db, { projectId: "proj-1", projectPath: tempDir });
 
     expect(result.coverage.transcriptCoveragePartial).toBe(true);
     expect(result.coverage.logsDateRange).toEqual({ earliest: "2026-01-01", latest: "2026-01-01" });
@@ -328,11 +329,30 @@ describe("generateDecisionMap", () => {
     vi.mocked(runHeadlessClaude).mockRejectedValue(new Error("claude unavailable"));
 
     const db = makeDb(ledger);
-    const result = await generateDecisionMap(db, { projectId: "proj-1", projectPath: tempDir });
+    const result = await generateDecisionMapSingleCall(db, { projectId: "proj-1", projectPath: tempDir });
 
     expect(result.decisions).toEqual([]);
     expect(result.coverage.extractionError).toContain("claude unavailable");
     expect(result.coverage.extractionError).toContain("1 log file(s)");
+  });
+
+  it("reports extractionError rather than a silent empty success when the call succeeds but nothing survives validation", async () => {
+    writeProjectLog("## 2026-01-01 — Start\n\nReal anchor text.\n");
+    vi.mocked(findAllTranscriptsForProject).mockReturnValue([]);
+    mockDecisions([
+      {
+        chose: "X",
+        over: "Y",
+        because: "Z.",
+        evidence: [{ source: "log", file: "PROJECT_LOG.md", anchor: "text that was never in the log" }]
+      }
+    ]);
+
+    const db = makeDb(ledger);
+    const result = await generateDecisionMapSingleCall(db, { projectId: "proj-1", projectPath: tempDir });
+
+    expect(result.decisions).toEqual([]);
+    expect(result.coverage.extractionError).not.toBeNull();
   });
 
   it("passes intentLedger: null through to the prompt when no ledger is saved", async () => {
@@ -341,7 +361,7 @@ describe("generateDecisionMap", () => {
     mockDecisions([]);
 
     const db = makeDb(null);
-    await generateDecisionMap(db, { projectId: "proj-1", projectPath: tempDir });
+    await generateDecisionMapSingleCall(db, { projectId: "proj-1", projectPath: tempDir });
 
     const prompt = vi.mocked(runHeadlessClaude).mock.calls[0][1].prompt;
     expect(JSON.parse(prompt).intentLedger).toBeNull();
@@ -361,7 +381,7 @@ describe("generateDecisionMap", () => {
     ]);
 
     const db = makeDb(null);
-    const result = await generateDecisionMap(db, { projectId: "proj-1", projectPath: tempDir });
+    const result = await generateDecisionMapSingleCall(db, { projectId: "proj-1", projectPath: tempDir });
 
     expect(result.decisions[0].servesIntent).toBeNull();
   });
@@ -397,7 +417,7 @@ describe("generateDecisionMap", () => {
     ]);
 
     const db = makeDb(ledger);
-    const result = await generateDecisionMap(db, { projectId: "proj-1", projectPath: tempDir });
+    const result = await generateDecisionMapSingleCall(db, { projectId: "proj-1", projectPath: tempDir });
 
     const seasonAgg = result.decisions.find((d) => d.chose === "Season-aggregate only");
     const flatPricing = result.decisions.find((d) => d.chose === "Flat pricing");
@@ -427,7 +447,7 @@ describe("generateDecisionMap", () => {
     ]);
 
     const db = makeDb(ledger);
-    const result = await generateDecisionMap(db, { projectId: "proj-1", projectPath: tempDir });
+    const result = await generateDecisionMapSingleCall(db, { projectId: "proj-1", projectPath: tempDir });
 
     expect(result.decisions[0].reversible).toBe("load-bearing");
   });
@@ -445,14 +465,18 @@ describe("generateDecisionMap", () => {
     ]);
 
     const db = makeDb(ledger);
-    const result = await generateDecisionMap(db, { projectId: "proj-1", projectPath: tempDir });
+    const result = await generateDecisionMapSingleCall(db, { projectId: "proj-1", projectPath: tempDir });
 
     expect(result.decisions[0].because).toBe("First reason applies. Second reason also applies.");
   });
 });
 
-describe("generateDecisionMapFannedOut", () => {
-  it("fans out into one call per log file plus one transcript call, and merges validated decisions from all of them", async () => {
+/** Distinguishes an extraction-slice request from a merge-pass request by
+ * payload shape (`logs`/`reasoningClusters`/`excerpts` vs `candidates`). */
+const isMergeRequest = (prompt: string): boolean => "candidates" in JSON.parse(prompt);
+
+describe("generateDecisionMap", () => {
+  it("fans out into one call per log file plus one transcript call, merges across slices, and validates the merged result", async () => {
     fs.writeFileSync(path.join(tempDir, "PROJECT_LOG.md"), "## 2026-07-20 — A\n\nChose X over Y because Z.\n", "utf8");
     fs.writeFileSync(
       path.join(tempDir, "BACKFILL_LOG.md"),
@@ -469,8 +493,13 @@ describe("generateDecisionMapFannedOut", () => {
     ]);
 
     vi.mocked(runHeadlessClaude).mockImplementation(async (_db, request) => {
-      const payload = JSON.parse(request.prompt) as { logs: { file: string }[] };
-      if (payload.logs.some((l) => l.file === "PROJECT_LOG.md")) {
+      const payload = JSON.parse(request.prompt) as { logs?: { file: string }[]; candidates?: unknown[] };
+      if (isMergeRequest(request.prompt)) {
+        // Three genuinely different decisions - nothing for the merge pass
+        // to combine, so it should pass them through unchanged.
+        return JSON.stringify({ decisions: payload.candidates });
+      }
+      if (payload.logs?.some((l) => l.file === "PROJECT_LOG.md")) {
         return JSON.stringify({
           decisions: [
             {
@@ -482,7 +511,7 @@ describe("generateDecisionMapFannedOut", () => {
           ]
         });
       }
-      if (payload.logs.some((l) => l.file === "BACKFILL_LOG.md")) {
+      if (payload.logs?.some((l) => l.file === "BACKFILL_LOG.md")) {
         return JSON.stringify({
           decisions: [
             {
@@ -513,17 +542,147 @@ describe("generateDecisionMapFannedOut", () => {
     });
 
     const db = makeDb(ledger);
-    const result = await generateDecisionMapFannedOut(db, { projectId: "proj-1", projectPath: tempDir });
+    const result = await generateDecisionMap(db, { projectId: "proj-1", projectPath: tempDir });
 
-    expect(runHeadlessClaude).toHaveBeenCalledTimes(3);
+    expect(runHeadlessClaude).toHaveBeenCalledTimes(4); // 3 slices + 1 merge
     expect(result.decisions.map((d) => d.chose).sort()).toEqual(["N", "P", "X"]);
+  });
+
+  it("merges two candidates describing the same choice from different slices into one decision, unioning their evidence", async () => {
+    fs.writeFileSync(
+      path.join(tempDir, "BACKFILL_LOG.md"),
+      "Ops lesson: never run two backfill processes concurrently - database is locked.\n",
+      "utf8"
+    );
+    writeLines(
+      transcriptPath,
+      humanUserTurn("can we explore parallel run right?"),
+      assistantText("Parallel backfill runs are a bad idea - simultaneous requests also worsen API throttling.")
+    );
+    vi.mocked(findAllTranscriptsForProject).mockReturnValue([
+      { path: transcriptPath, mtimeMs: Date.parse("2026-07-22T00:00:00.000Z") }
+    ]);
+
+    vi.mocked(runHeadlessClaude).mockImplementation(async (_db, request) => {
+      const payload = JSON.parse(request.prompt) as { logs?: { file: string }[] };
+      if (isMergeRequest(request.prompt)) {
+        return JSON.stringify({
+          decisions: [
+            {
+              chose: "Run backfills sequentially",
+              over: "Running backfills in parallel",
+              because: "A parallel run crashed with a database lock, and parallel requests also worsen API throttling.",
+              evidence: [
+                {
+                  source: "log",
+                  file: "BACKFILL_LOG.md",
+                  anchor: "Ops lesson: never run two backfill processes concurrently - database is locked."
+                },
+                {
+                  source: "transcript",
+                  sessionId: "session",
+                  anchor: "simultaneous requests also worsen API throttling"
+                }
+              ]
+            }
+          ]
+        });
+      }
+      if (payload.logs?.some((l) => l.file === "BACKFILL_LOG.md")) {
+        return JSON.stringify({
+          decisions: [
+            {
+              chose: "Run backfills sequentially",
+              over: "Running backfills in parallel",
+              because: "A parallel run crashed with a database lock.",
+              evidence: [
+                {
+                  source: "log",
+                  file: "BACKFILL_LOG.md",
+                  anchor: "Ops lesson: never run two backfill processes concurrently - database is locked."
+                }
+              ]
+            }
+          ]
+        });
+      }
+      return JSON.stringify({
+        decisions: [
+          {
+            chose: "Sequential runs only",
+            over: "Parallel runs",
+            because: "Parallel requests also worsen API throttling.",
+            evidence: [
+              {
+                source: "transcript",
+                sessionId: "session",
+                anchor: "simultaneous requests also worsen API throttling"
+              }
+            ]
+          }
+        ]
+      });
+    });
+
+    const db = makeDb(ledger);
+    const result = await generateDecisionMap(db, { projectId: "proj-1", projectPath: tempDir });
+
+    expect(result.decisions).toHaveLength(1);
+    expect(result.decisions[0].evidence.map((e) => e.source).sort()).toEqual(["log", "transcript"]);
+    expect(result.decisions[0].because).toContain("database lock");
+    expect(result.decisions[0].because).toContain("throttling");
+  });
+
+  it("falls back to the pre-merge candidates unchanged when the merge call itself returns nothing usable", async () => {
+    fs.writeFileSync(path.join(tempDir, "PROJECT_LOG.md"), "## 2026-07-20 — A\n\nChose X over Y because Z.\n", "utf8");
+    fs.writeFileSync(path.join(tempDir, "BACKFILL_LOG.md"), "Chose P over Q because R.\n", "utf8");
+    vi.mocked(findAllTranscriptsForProject).mockReturnValue([]);
+
+    vi.mocked(runHeadlessClaude).mockImplementation(async (_db, request) => {
+      if (isMergeRequest(request.prompt)) {
+        return "I'm not confident these are distinguishable, sorry.";
+      }
+      const payload = JSON.parse(request.prompt) as { logs: { file: string }[] };
+      if (payload.logs.some((l) => l.file === "PROJECT_LOG.md")) {
+        return JSON.stringify({
+          decisions: [
+            { chose: "X", over: "Y", because: "Z.", evidence: [{ source: "log", file: "PROJECT_LOG.md", anchor: "Chose X over Y because Z." }] }
+          ]
+        });
+      }
+      return JSON.stringify({
+        decisions: [
+          { chose: "P", over: "Q", because: "R.", evidence: [{ source: "log", file: "BACKFILL_LOG.md", anchor: "Chose P over Q because R." }] }
+        ]
+      });
+    });
+
+    const db = makeDb(ledger);
+    const result = await generateDecisionMap(db, { projectId: "proj-1", projectPath: tempDir });
+
+    expect(result.decisions.map((d) => d.chose).sort()).toEqual(["P", "X"]);
+    expect(result.coverage.extractionError).toBeNull();
+  });
+
+  it("skips the merge call entirely when only one slice produced a candidate - nothing to deduplicate", async () => {
+    fs.writeFileSync(path.join(tempDir, "PROJECT_LOG.md"), "## 2026-07-20 — A\n\nChose X over Y because Z.\n", "utf8");
+    vi.mocked(findAllTranscriptsForProject).mockReturnValue([]);
+    mockDecisions([
+      { chose: "X", over: "Y", because: "Z.", evidence: [{ source: "log", file: "PROJECT_LOG.md", anchor: "Chose X over Y because Z." }] }
+    ]);
+
+    const db = makeDb(ledger);
+    const result = await generateDecisionMap(db, { projectId: "proj-1", projectPath: tempDir });
+
+    expect(runHeadlessClaude).toHaveBeenCalledTimes(1);
+    expect(result.decisions).toHaveLength(1);
   });
 
   it("returns an empty record with no headless calls when there are no logs or transcripts", async () => {
     vi.mocked(findAllTranscriptsForProject).mockReturnValue([]);
     const db = makeDb(ledger);
 
-    const result = await generateDecisionMapFannedOut(db, { projectId: "proj-1", projectPath: tempDir });
+    const result = await generateDecisionMap(db, { projectId: "proj-1", projectPath: tempDir });
 
     expect(result.decisions).toEqual([]);
     expect(runHeadlessClaude).not.toHaveBeenCalled();
@@ -542,9 +701,29 @@ describe("generateDecisionMapFannedOut", () => {
     ]);
 
     const db = makeDb(ledger);
-    const result = await generateDecisionMapFannedOut(db, { projectId: "proj-1", projectPath: tempDir });
+    const result = await generateDecisionMap(db, { projectId: "proj-1", projectPath: tempDir });
 
     expect(result.decisions).toEqual([]);
+  });
+
+  it("reports extractionError rather than a silent empty success when validation drops every decision despite real candidates", async () => {
+    fs.writeFileSync(path.join(tempDir, "PROJECT_LOG.md"), "## 2026-07-20 — A\n\nReal anchor text.\n", "utf8");
+    vi.mocked(findAllTranscriptsForProject).mockReturnValue([]);
+    mockDecisions([
+      {
+        chose: "X",
+        over: "Y",
+        because: "Z.",
+        evidence: [{ source: "log", file: "PROJECT_LOG.md", anchor: "text that was never in the log" }]
+      }
+    ]);
+
+    const db = makeDb(ledger);
+    const result = await generateDecisionMap(db, { projectId: "proj-1", projectPath: tempDir });
+
+    expect(result.decisions).toEqual([]);
+    expect(result.coverage.extractionError).not.toBeNull();
+    expect(result.coverage.extractionError).toContain("1 log file(s)");
   });
 });
 
