@@ -398,6 +398,51 @@ describe("generateDecisionMap", () => {
     expect(seasonAgg?.reversible).toBe("cheap");
     expect(flatPricing?.reversible).toBeNull();
   });
+
+  it("also survives a 'load-bearing' tag when the evidence states load-bearing language, not just 'cheap' language", async () => {
+    writeProjectLog(
+      "## 2026-01-01 — Start\n\nSchema choice is load-bearing and would require a rewrite to change later.\n"
+    );
+    vi.mocked(findAllTranscriptsForProject).mockReturnValue([]);
+    mockDecisions([
+      {
+        chose: "Wide table",
+        over: "Normalized schema",
+        because: "Read performance.",
+        evidence: [
+          {
+            source: "log",
+            file: "PROJECT_LOG.md",
+            anchor: "Schema choice is load-bearing and would require a rewrite to change later."
+          }
+        ],
+        reversible: "load-bearing"
+      }
+    ]);
+
+    const db = makeDb(ledger);
+    const result = await generateDecisionMap(db, { projectId: "proj-1", projectPath: tempDir });
+
+    expect(result.decisions[0].reversible).toBe("load-bearing");
+  });
+
+  it("truncates 'because' to two sentences even when the model returns more", async () => {
+    writeProjectLog("## 2026-01-01 — Start\n\nChose X over Y for three stated reasons.\n");
+    vi.mocked(findAllTranscriptsForProject).mockReturnValue([]);
+    mockDecisions([
+      {
+        chose: "X",
+        over: "Y",
+        because: "First reason applies. Second reason also applies. Third reason is extra and should be cut.",
+        evidence: [{ source: "log", file: "PROJECT_LOG.md", anchor: "Chose X over Y for three stated reasons." }]
+      }
+    ]);
+
+    const db = makeDb(ledger);
+    const result = await generateDecisionMap(db, { projectId: "proj-1", projectPath: tempDir });
+
+    expect(result.decisions[0].because).toBe("First reason applies. Second reason also applies.");
+  });
 });
 
 describe("findDecisionLanguageExcerpts", () => {

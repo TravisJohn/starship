@@ -350,6 +350,21 @@ const SERVES_INTENT_RECORD_VALUES: DecisionServesIntent[] = [
 
 const REVERSIBILITY_VALUES: DecisionReversibility[] = ["cheap", "load-bearing"];
 
+/**
+ * Code-side enforcement of "because - two sentences maximum" - the prompt
+ * asks for this, but a model doesn't always comply, and this rule exists to
+ * protect altitude discipline, not to be optional. Sentence-splitting is a
+ * light heuristic (naive on abbreviations/decimals), not full NLP - good
+ * enough to cap length without rejecting an otherwise-valid decision over it.
+ */
+const truncateToTwoSentences = (text: string): string => {
+  const sentences = text.match(/[^.!?]+[.!?]+(?:\s+|$)|[^.!?]+$/g);
+  if (!sentences || sentences.length <= 2) {
+    return text;
+  }
+  return sentences.slice(0, 2).join("").trim();
+};
+
 const parseRawEvidence = (entry: JsonRecord): RawEvidence | null => {
   const source = asString(entry.source);
   const anchor = asString(entry.anchor)?.trim();
@@ -375,10 +390,11 @@ const parseRawEvidence = (entry: JsonRecord): RawEvidence | null => {
 const parseRawDecision = (entry: JsonRecord): RawDecision | null => {
   const chose = asString(entry.chose)?.trim();
   const over = asString(entry.over)?.trim();
-  const because = asString(entry.because)?.trim();
-  if (!chose || !over || !because) {
+  const becauseRaw = asString(entry.because)?.trim();
+  if (!chose || !over || !becauseRaw) {
     return null;
   }
+  const because = truncateToTwoSentences(becauseRaw);
 
   const evidence = Array.isArray(entry.evidence)
     ? entry.evidence
@@ -475,16 +491,28 @@ const verifyEvidence = (
     : null;
 };
 
-const REVERSIBILITY_LANGUAGE = /\b(later|can be added|without rework|non-destructive|deferr?ed?)\b/i;
+const CHEAP_LANGUAGE = /\b(later|can be added|without rework|non-destructive|deferr?ed?)\b/i;
+const LOAD_BEARING_LANGUAGE =
+  /\b(load-bearing|hard to (reverse|undo|unwind)|costly to (reverse|undo|change)|would require (a |significant )?rewrite|locks? (us|you|the project)? ?into|irreversible|no going back|can'?t be undone|cannot be undone)\b/i;
 
 /**
  * Light sanity net for rule "reversible only when the session states it,
  * never inferred": rejects the clearest hallucinations (a reversible tag
- * with no reversibility language anywhere in its own evidence) without
- * claiming to perfectly verify a semantic judgment.
+ * with no matching reversibility language anywhere in its own evidence)
+ * without claiming to perfectly verify a semantic judgment. Checks against
+ * vocabulary matching the CLAIMED tag, not one shared pattern - "cheap" and
+ * "load-bearing" are opposite claims and need opposite evidence; a single
+ * cheap-leaning regex applied to both would mean "load-bearing" could only
+ * ever survive by the evidence text accidentally also containing a
+ * cheap-sounding word, which is nonsensical.
  */
-const evidenceStatesReversibility = (evidence: DecisionEvidenceEntry[]): boolean =>
-  evidence.some((entry) => REVERSIBILITY_LANGUAGE.test(entry.anchor));
+const evidenceStatesReversibility = (
+  evidence: DecisionEvidenceEntry[],
+  tag: DecisionReversibility
+): boolean => {
+  const pattern = tag === "cheap" ? CHEAP_LANGUAGE : LOAD_BEARING_LANGUAGE;
+  return evidence.some((entry) => pattern.test(entry.anchor));
+};
 
 const isoDateFromMillis = (mtimeMs: number): string => new Date(mtimeMs).toISOString().slice(0, 10);
 
@@ -538,7 +566,8 @@ const buildValidatedDecisions = (
         because: raw.because,
         evidence,
         servesIntent: hasLedger ? raw.servesIntent : null,
-        reversible: raw.reversible && evidenceStatesReversibility(evidence) ? raw.reversible : null,
+        reversible:
+          raw.reversible && evidenceStatesReversibility(evidence, raw.reversible) ? raw.reversible : null,
         collapsed: raw.collapsed,
         supersedes: null,
         date: resolveDecisionDate(evidence, sessionDates),
