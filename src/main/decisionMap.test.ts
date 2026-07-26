@@ -517,4 +517,19 @@ describe("findDecisionLanguageExcerpts", () => {
     // different origin.kind) should have overwritten the tracked question.
     expect(excerpts[1].userQuestion).toBe("can we explore parallel run right?");
   });
+
+  it("catches 'bad idea' phrasing - the real worked example this rebuild was designed around used this exact word, not any of the other patterns", () => {
+    writeLines(
+      transcriptPath,
+      humanUserTurn("wondering while it is running on a background can we do something else as well? Also we can explore parallel run right?"),
+      assistantText(
+        "Yes to doing other things — but parallel backfill runs specifically are a bad idea for two separate reasons already documented in this project: SQLite write-lock crashes and API throttling getting worse, not better."
+      )
+    );
+
+    const excerpts = findDecisionLanguageExcerpts([{ path: transcriptPath }]);
+
+    expect(excerpts).toHaveLength(1);
+    expect(excerpts[0].assistantText).toContain("bad idea");
+  });
 });

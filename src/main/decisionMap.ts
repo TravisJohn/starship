@@ -160,12 +160,18 @@ export type DecisionExcerpt = {
  * itself. Deliberately a wide net (some of these, like "instead of", are
  * common enough to over-match): over-collection here is cheap, since every
  * candidate still has to pass the model's own judgment and this module's
- * verbatim-evidence check before becoming a decision.
+ * verbatim-evidence check before becoming a decision. "bad idea" was missing
+ * from an earlier pass despite being named explicitly in the brief's own
+ * blind-spot description - confirmed live: it's the exact phrase the
+ * flagship parallel-vs-sequential backfill decision actually used
+ * ("parallel backfill runs specifically are a bad idea for two separate
+ * reasons"), and its absence meant that decision never surfaced at all.
  */
 const DECISION_LANGUAGE_PATTERNS = [
   "one real decision to flag",
   "let me flag one real risk before",
   "this needs your input",
+  "bad idea",
   "i'd suggest",
   "the tradeoff is",
   "instead of",
@@ -589,11 +595,19 @@ const buildValidatedDecisions = (
 // headlessClaude.ts pipes the prompt over stdin, not a CLI argument, so this
 // is no longer bounded by Windows's ~32K command-line limit (that was the
 // original reason for a tight budget here, before the stdin fix). This still
-// exists to bound headless-call cost/latency for a pathological project
-// with an enormous log history or transcript count - 120,000 characters
-// comfortably covers a real dense project (NoFlightZone's three log files
-// combined are ~100KB) without sending unbounded data on every click.
-export const PROMPT_PAYLOAD_BUDGET = 120000;
+// exists to bound headless-call cost/latency for a pathological project.
+//
+// 120,000 was tried first and was still too tight in practice: NoFlightZone's
+// three real log files alone are ~100,000 characters once JSON-serialized,
+// which left almost no room for transcript excerpts - and because
+// boundForPrompt drops the OLDEST excerpts first (lowest priority under
+// budget pressure), the one older session holding the flagship
+// parallel-vs-sequential decision this whole rebuild was designed around got
+// dropped entirely, while only the newest session's excerpts survived. Raised
+// to comfortably fit a real dense project's full logs AND all its transcript
+// excerpts without dropping anything, while still bounding a truly
+// pathological project (e.g. logs an order of magnitude larger than this).
+export const PROMPT_PAYLOAD_BUDGET = 250000;
 
 const payloadSize = (payload: unknown): number => JSON.stringify(payload).length;
 
