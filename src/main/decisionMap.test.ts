@@ -37,7 +37,7 @@ vi.mock("./inception/headlessClaude", () => ({
 }));
 
 import { findAllTranscriptsForProject } from "./dashboard";
-import { findDecisionLanguageExcerpts, generateDecisionMap } from "./decisionMap";
+import { boundForPrompt, findDecisionLanguageExcerpts, generateDecisionMap } from "./decisionMap";
 import { runHeadlessClaude } from "./inception/headlessClaude";
 
 let tempDir: string;
@@ -442,6 +442,47 @@ describe("generateDecisionMap", () => {
     const result = await generateDecisionMap(db, { projectId: "proj-1", projectPath: tempDir });
 
     expect(result.decisions[0].because).toBe("First reason applies. Second reason also applies.");
+  });
+});
+
+describe("boundForPrompt", () => {
+  it("drops the oldest excerpts first to fit the payload budget, keeping logs and clusters intact when they alone fit", () => {
+    const logs = [{ file: "PROJECT_LOG.md", content: "Short log content." }];
+    const clusters = [{ reasoning: "One cluster.", occurrenceCount: 2, sessionId: "s1" }];
+    // Many large excerpts - a real run against NoFlightZone hit exactly this
+    // (61 excerpts + full log text) and crashed the headless spawn with
+    // ENAMETOOLONG because nothing bounded the combined payload.
+    const excerpts = Array.from({ length: 40 }, (_, i) => ({
+      sessionId: "s" + i,
+      userQuestion: null,
+      assistantText: "x".repeat(1000)
+    }));
+
+    const bounded = boundForPrompt(logs, clusters, excerpts);
+
+    const size = JSON.stringify({
+      logs: bounded.logs,
+      reasoningClusters: bounded.clusters,
+      excerpts: bounded.excerpts
+    }).length;
+
+    expect(size).toBeLessThanOrEqual(12000);
+    expect(bounded.logs).toEqual(logs);
+    expect(bounded.clusters).toEqual(clusters);
+    expect(bounded.excerpts.length).toBeLessThan(excerpts.length);
+    // Oldest (front of the array) dropped first - the tail (most recent
+    // sessions) survives.
+    expect(bounded.excerpts[bounded.excerpts.length - 1]).toEqual(excerpts[excerpts.length - 1]);
+  });
+
+  it("truncates log content from the front, keeping the most recent (tail) text, only once excerpts and clusters are already gone", () => {
+    const logs = [{ file: "PROJECT_LOG.md", content: "OLD-START " + "x".repeat(20000) + " NEW-END" }];
+
+    const bounded = boundForPrompt(logs, [], []);
+
+    expect(bounded.logs[0].content.length).toBeLessThan(logs[0].content.length);
+    expect(bounded.logs[0].content).toContain("NEW-END");
+    expect(bounded.logs[0].content).not.toContain("OLD-START");
   });
 });
 

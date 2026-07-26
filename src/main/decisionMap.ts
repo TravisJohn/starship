@@ -586,6 +586,61 @@ const buildValidatedDecisions = (
   return sortMostRecentFirst(resolved);
 };
 
+// Matches fileMap.ts's proven-safe TIMELINE_CHARACTER_BUDGET - keeps the
+// rendered `claude -p` argument safely under Windows's ~32K total
+// command-line length even after argument-escaping overhead. A real run
+// against NoFlightZone hit this directly (61 excerpts + full log text spawned
+// `ENAMETOOLONG`) - this budget exists because that happened, not on spec.
+const PROMPT_PAYLOAD_BUDGET = 12000;
+
+const payloadSize = (payload: unknown): number => JSON.stringify(payload).length;
+
+type PromptCandidates = { logs: ProjectLogFile[]; clusters: ReasoningCluster[]; excerpts: DecisionExcerpt[] };
+
+/**
+ * Fits candidates within PROMPT_PAYLOAD_BUDGET, dropping lowest-priority
+ * material first: oldest excerpts, then oldest clusters, and only as a last
+ * resort truncating log content itself (kept from the END of each file -
+ * these logs are written chronologically, newest at the bottom, so the tail
+ * is the most relevant text to keep). The returned, possibly-bounded arrays
+ * are used for BOTH the prompt and evidence validation - a decision can
+ * never be "verified" against text the model was never actually shown.
+ */
+export const boundForPrompt = (
+  logs: ProjectLogFile[],
+  clusters: ReasoningCluster[],
+  excerpts: DecisionExcerpt[]
+): PromptCandidates => {
+  let boundedExcerpts = excerpts;
+  let boundedClusters = clusters;
+  let boundedLogs = logs;
+
+  const fits = (): boolean =>
+    payloadSize({ logs: boundedLogs, reasoningClusters: boundedClusters, excerpts: boundedExcerpts }) <=
+    PROMPT_PAYLOAD_BUDGET;
+
+  while (!fits() && boundedExcerpts.length > 0) {
+    boundedExcerpts = boundedExcerpts.slice(1);
+  }
+
+  while (!fits() && boundedClusters.length > 0) {
+    boundedClusters = boundedClusters.slice(1);
+  }
+
+  if (!fits() && boundedLogs.length > 0) {
+    const perFileBudget = Math.max(500, Math.floor(PROMPT_PAYLOAD_BUDGET / boundedLogs.length));
+    boundedLogs = boundedLogs.map((log) => ({
+      file: log.file,
+      content:
+        log.content.length <= perFileBudget
+          ? log.content
+          : log.content.slice(log.content.length - perFileBudget)
+    }));
+  }
+
+  return { logs: boundedLogs, clusters: boundedClusters, excerpts: boundedExcerpts };
+};
+
 const computeCoverage = (
   decisions: DecisionRecordEntry[],
   logs: ProjectLogFile[],
@@ -679,6 +734,11 @@ export const generateDecisionMap = async (
     ])
   );
 
+  // Bound BEFORE building the prompt, and reuse the exact same bounded
+  // arrays for evidence validation below - whatever the model was actually
+  // shown is the only thing an anchor can ever be verified against.
+  const bounded = boundForPrompt(logs, clusters, excerpts);
+
   try {
     const prompt = fillPromptTemplate(readPromptTemplate(), {
       payload_json: JSON.stringify(
@@ -691,13 +751,13 @@ export const generateDecisionMap = async (
                 neverDo: ledger.neverDo
               }
             : null,
-          logs: logs.map((log) => ({ file: log.file, content: log.content })),
-          reasoningClusters: clusters.map((cluster) => ({
+          logs: bounded.logs.map((log) => ({ file: log.file, content: log.content })),
+          reasoningClusters: bounded.clusters.map((cluster) => ({
             reasoning: cluster.reasoning,
             occurrenceCount: cluster.occurrenceCount,
             sessionId: cluster.sessionId
           })),
-          excerpts: excerpts.map((excerpt) => ({
+          excerpts: bounded.excerpts.map((excerpt) => ({
             sessionId: excerpt.sessionId,
             userQuestion: excerpt.userQuestion,
             assistantText: excerpt.assistantText
@@ -717,9 +777,9 @@ export const generateDecisionMap = async (
     const rawDecisions = extractDecisionResponse(raw) ?? [];
     const decisions = buildValidatedDecisions(
       rawDecisions,
-      logs,
-      clusters,
-      excerpts,
+      bounded.logs,
+      bounded.clusters,
+      bounded.excerpts,
       sessionDates,
       ledger !== null
     );
