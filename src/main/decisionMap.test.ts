@@ -37,7 +37,12 @@ vi.mock("./inception/headlessClaude", () => ({
 }));
 
 import { findAllTranscriptsForProject } from "./dashboard";
-import { boundForPrompt, findDecisionLanguageExcerpts, generateDecisionMap } from "./decisionMap";
+import {
+  boundForPrompt,
+  findDecisionLanguageExcerpts,
+  generateDecisionMap,
+  PROMPT_PAYLOAD_BUDGET
+} from "./decisionMap";
 import { runHeadlessClaude } from "./inception/headlessClaude";
 
 let tempDir: string;
@@ -449,10 +454,12 @@ describe("boundForPrompt", () => {
   it("drops the oldest excerpts first to fit the payload budget, keeping logs and clusters intact when they alone fit", () => {
     const logs = [{ file: "PROJECT_LOG.md", content: "Short log content." }];
     const clusters = [{ reasoning: "One cluster.", occurrenceCount: 2, sessionId: "s1" }];
-    // Many large excerpts - a real run against NoFlightZone hit exactly this
-    // (61 excerpts + full log text) and crashed the headless spawn with
-    // ENAMETOOLONG because nothing bounded the combined payload.
-    const excerpts = Array.from({ length: 40 }, (_, i) => ({
+    // Enough oversized excerpts to exceed PROMPT_PAYLOAD_BUDGET regardless of
+    // its current value - a real run against NoFlightZone hit exactly this
+    // shape (61 excerpts + full log text) and (before stdin delivery + this
+    // budget existed at all) crashed the headless spawn with ENAMETOOLONG.
+    const excerptCount = Math.ceil(PROMPT_PAYLOAD_BUDGET / 1000) + 20;
+    const excerpts = Array.from({ length: excerptCount }, (_, i) => ({
       sessionId: "s" + i,
       userQuestion: null,
       assistantText: "x".repeat(1000)
@@ -466,7 +473,7 @@ describe("boundForPrompt", () => {
       excerpts: bounded.excerpts
     }).length;
 
-    expect(size).toBeLessThanOrEqual(12000);
+    expect(size).toBeLessThanOrEqual(PROMPT_PAYLOAD_BUDGET);
     expect(bounded.logs).toEqual(logs);
     expect(bounded.clusters).toEqual(clusters);
     expect(bounded.excerpts.length).toBeLessThan(excerpts.length);
@@ -476,7 +483,9 @@ describe("boundForPrompt", () => {
   });
 
   it("truncates log content from the front, keeping the most recent (tail) text, only once excerpts and clusters are already gone", () => {
-    const logs = [{ file: "PROJECT_LOG.md", content: "OLD-START " + "x".repeat(20000) + " NEW-END" }];
+    const logs = [
+      { file: "PROJECT_LOG.md", content: "OLD-START " + "x".repeat(PROMPT_PAYLOAD_BUDGET + 5000) + " NEW-END" }
+    ];
 
     const bounded = boundForPrompt(logs, [], []);
 

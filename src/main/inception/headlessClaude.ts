@@ -31,9 +31,19 @@ export const runHeadlessClaude = async (
   return result;
 };
 
+/**
+ * The prompt is piped over stdin, not passed as a CLI argument - confirmed
+ * live (`echo <prompt> | claude -p --output-format json` round-trips
+ * correctly) before switching. A real run against NoFlightZone's project
+ * logs (~100KB combined across the three files) crashed `spawn` with
+ * `ENAMETOOLONG` when the prompt was a positional argument: Windows caps the
+ * whole command line at ~32K characters, and no per-caller truncation budget
+ * can fix that for a project whose own logs alone exceed it. Stdin has no
+ * such limit.
+ */
 const spawnClaude = (prompt: string, cwd: string): Promise<string> =>
   new Promise((resolve, reject) => {
-    const child = spawn(resolveClaudeCommand(), ["-p", prompt, "--output-format", "json"], {
+    const child = spawn(resolveClaudeCommand(), ["-p", "--output-format", "json"], {
       cwd,
       env: process.env,
       windowsHide: true
@@ -71,6 +81,9 @@ const spawnClaude = (prompt: string, cwd: string): Promise<string> =>
         reject(error);
       }
     });
+
+    child.stdin.write(prompt, "utf8");
+    child.stdin.end();
   });
 
 const resolveClaudeCommand = (): string => {
@@ -98,7 +111,24 @@ const extractDraft = (stdout: string): string => {
 
   const result =
     typeof parsed.result === "string" ? parsed.result : JSON.stringify(parsed.result);
-  const nested = parseJson(stripCodeFence(result));
+
+  // `result` is only wrapped in `{draft: "..."}` for Inception's own
+  // drafting prompts - every other caller (File Map, Decision Map,
+  // Narrative Journey, Intent annotation) asks for its own JSON shape
+  // directly, or the model may respond with plain, non-JSON prose (a
+  // refusal or clarification) instead of complying with the "return only
+  // JSON" instruction. Either case must fall through to the raw text below,
+  // not throw - a caller's own extraction logic (e.g. decisionMap.ts's
+  // extractDecisionResponse) already handles "this wasn't valid JSON"
+  // gracefully; this function's job is only to unwrap the draft envelope
+  // when one is actually present.
+  let nested: unknown = null;
+  try {
+    nested = parseJson(stripCodeFence(result));
+  } catch {
+    nested = null;
+  }
+
   if (isObject(nested) && typeof nested.draft === "string") {
     return nested.draft.trim();
   }

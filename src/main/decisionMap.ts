@@ -586,12 +586,14 @@ const buildValidatedDecisions = (
   return sortMostRecentFirst(resolved);
 };
 
-// Matches fileMap.ts's proven-safe TIMELINE_CHARACTER_BUDGET - keeps the
-// rendered `claude -p` argument safely under Windows's ~32K total
-// command-line length even after argument-escaping overhead. A real run
-// against NoFlightZone hit this directly (61 excerpts + full log text spawned
-// `ENAMETOOLONG`) - this budget exists because that happened, not on spec.
-const PROMPT_PAYLOAD_BUDGET = 12000;
+// headlessClaude.ts pipes the prompt over stdin, not a CLI argument, so this
+// is no longer bounded by Windows's ~32K command-line limit (that was the
+// original reason for a tight budget here, before the stdin fix). This still
+// exists to bound headless-call cost/latency for a pathological project
+// with an enormous log history or transcript count - 120,000 characters
+// comfortably covers a real dense project (NoFlightZone's three log files
+// combined are ~100KB) without sending unbounded data on every click.
+export const PROMPT_PAYLOAD_BUDGET = 120000;
 
 const payloadSize = (payload: unknown): number => JSON.stringify(payload).length;
 
