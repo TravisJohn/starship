@@ -11,7 +11,8 @@ import type {
   DecisionRecordEntry,
   DecisionRecordResult,
   DecisionReversibility,
-  DecisionServesIntent
+  DecisionServesIntent,
+  IntentLedger
 } from "../shared/ipc";
 import { extractDatedHeadings, findAllTranscriptsForProject } from "./dashboard";
 import type { StarshipDb } from "./db";
@@ -707,6 +708,61 @@ const describeExtractionError = (
 ): string =>
   `${stringifyError(error)} - ${logCount} log file(s), ${clusterCount} reasoning cluster(s), and ${excerptCount} transcript excerpt(s) were found but couldn't be structured into decisions this time.`;
 
+type DecisionCandidates = {
+  logs: ProjectLogFile[];
+  transcripts: { path: string; mtimeMs: number }[];
+  clusters: ReasoningCluster[];
+  excerpts: DecisionExcerpt[];
+  ledger: IntentLedger | null;
+  sessionDates: Map<string, string>;
+};
+
+/**
+ * Shared setup for both extraction strategies (single-call and fanned-out):
+ * reads the project's logs and transcripts, builds the reasoning-cluster and
+ * decision-language candidate pools, and resolves the Intent Ledger. Returns
+ * null when there's nothing to work with at all, so both callers can share
+ * one early-empty-return path.
+ */
+const gatherDecisionCandidates = (
+  db: StarshipDb,
+  request: DecisionMapGenerateRequest
+): DecisionCandidates | null => {
+  const logs = readProjectLogs(request.projectPath);
+  const transcripts = findAllTranscriptsForProject(request.projectPath);
+  const clusters = transcripts.length > 0 ? buildReasoningClusters(transcripts) : [];
+  const excerpts = transcripts.length > 0 ? findDecisionLanguageExcerpts(transcripts) : [];
+
+  if (logs.length === 0 && clusters.length === 0 && excerpts.length === 0) {
+    return null;
+  }
+
+  const ledger = db.getIntentLedger(request.projectId);
+  const sessionDates = new Map(
+    transcripts.map((transcript) => [
+      sessionIdFromTranscriptPath(transcript.path),
+      isoDateFromMillis(transcript.mtimeMs)
+    ])
+  );
+
+  return { logs, transcripts, clusters, excerpts, ledger, sessionDates };
+};
+
+const emptyDecisionRecordResult = (generatedAt: string): DecisionRecordResult => ({
+  decisions: [],
+  coverage: {
+    totalDecisions: 0,
+    fromLogs: 0,
+    fromTranscript: 0,
+    hasProjectLogs: false,
+    logsDateRange: null,
+    transcriptDateRange: null,
+    transcriptCoveragePartial: false,
+    extractionError: null
+  },
+  generatedAt
+});
+
 /**
  * The whole project's decision history, sourced from its own git-tracked
  * logs (the spine) plus selective transcript reading that fills one named
@@ -720,35 +776,11 @@ export const generateDecisionMap = async (
 ): Promise<DecisionRecordResult> => {
   const generatedAt = new Date().toISOString();
 
-  const logs = readProjectLogs(request.projectPath);
-  const transcripts = findAllTranscriptsForProject(request.projectPath);
-  const clusters = transcripts.length > 0 ? buildReasoningClusters(transcripts) : [];
-  const excerpts = transcripts.length > 0 ? findDecisionLanguageExcerpts(transcripts) : [];
-
-  if (logs.length === 0 && clusters.length === 0 && excerpts.length === 0) {
-    return {
-      decisions: [],
-      coverage: {
-        totalDecisions: 0,
-        fromLogs: 0,
-        fromTranscript: 0,
-        hasProjectLogs: false,
-        logsDateRange: null,
-        transcriptDateRange: null,
-        transcriptCoveragePartial: false,
-        extractionError: null
-      },
-      generatedAt
-    };
+  const candidates = gatherDecisionCandidates(db, request);
+  if (!candidates) {
+    return emptyDecisionRecordResult(generatedAt);
   }
-
-  const ledger = db.getIntentLedger(request.projectId);
-  const sessionDates = new Map(
-    transcripts.map((transcript) => [
-      sessionIdFromTranscriptPath(transcript.path),
-      isoDateFromMillis(transcript.mtimeMs)
-    ])
-  );
+  const { logs, transcripts, clusters, excerpts, ledger, sessionDates } = candidates;
 
   // Bound BEFORE building the prompt, and reuse the exact same bounded
   // arrays for evidence validation below - whatever the model was actually
@@ -807,6 +839,152 @@ export const generateDecisionMap = async (
     });
 
     const decisions = parseAndValidate(raw);
+
+    return {
+      decisions,
+      coverage: { ...computeCoverage(decisions, logs, transcripts), extractionError: null },
+      generatedAt
+    };
+  } catch (error) {
+    return {
+      decisions: [],
+      coverage: {
+        ...computeCoverage([], logs, transcripts),
+        extractionError: describeExtractionError(error, logs.length, clusters.length, excerpts.length)
+      },
+      generatedAt
+    };
+  }
+};
+
+type DecisionCandidateSlice = {
+  label: string;
+  logs: ProjectLogFile[];
+  clusters: ReasoningCluster[];
+  excerpts: DecisionExcerpt[];
+};
+
+/**
+ * One slice per log file, plus one slice for all transcript-derived material
+ * (clusters + excerpts) - the fanned-out alternative to handing everything
+ * to one call. Each log file is small enough alone (NoFlightZone's largest,
+ * PROJECT_LOG.md, is ~47KB) that boundForPrompt's log-truncation branch
+ * should never trigger per-slice, unlike the combined 250K-budget approach.
+ * The transcript slice still goes through boundForPrompt in case a project
+ * has an unusually large number of excerpts.
+ */
+const buildCandidateSlices = (
+  logs: ProjectLogFile[],
+  clusters: ReasoningCluster[],
+  excerpts: DecisionExcerpt[]
+): DecisionCandidateSlice[] => {
+  const slices: DecisionCandidateSlice[] = logs.map((log) => ({
+    label: `log:${log.file}`,
+    logs: [log],
+    clusters: [],
+    excerpts: []
+  }));
+
+  if (clusters.length > 0 || excerpts.length > 0) {
+    const bounded = boundForPrompt([], clusters, excerpts);
+    slices.push({ label: "transcript", logs: [], clusters: bounded.clusters, excerpts: bounded.excerpts });
+  }
+
+  return slices;
+};
+
+const buildSlicePayload = (ledger: IntentLedger | null, slice: DecisionCandidateSlice): string =>
+  JSON.stringify(
+    {
+      intentLedger: ledger
+        ? {
+            purpose: ledger.purpose,
+            successCriteria: ledger.successCriteria,
+            acceptedTradeoffs: ledger.acceptedTradeoffs,
+            neverDo: ledger.neverDo
+          }
+        : null,
+      logs: slice.logs.map((log) => ({ file: log.file, content: log.content })),
+      reasoningClusters: slice.clusters.map((cluster) => ({
+        reasoning: cluster.reasoning,
+        occurrenceCount: cluster.occurrenceCount,
+        sessionId: cluster.sessionId
+      })),
+      excerpts: slice.excerpts.map((excerpt) => ({
+        sessionId: excerpt.sessionId,
+        userQuestion: excerpt.userQuestion,
+        assistantText: excerpt.assistantText
+      }))
+    },
+    null,
+    2
+  );
+
+/**
+ * Runs one slice through its own headless call, cached independently under
+ * its own namespace (a nice side effect: if only one log file changes
+ * between clicks, only that slice's call needs to re-run). Returns raw,
+ * not-yet-validated decisions - validation happens once, after every slice's
+ * results are merged, against the FULL project context (buildValidatedDecisions
+ * already looks up evidence by source file/sessionId, not by which slice
+ * produced the candidate decision, so merging first and validating once is
+ * both correct and simpler than validating per-slice).
+ */
+const extractSliceDecisions = async (
+  db: StarshipDb,
+  ledger: IntentLedger | null,
+  slice: DecisionCandidateSlice
+): Promise<RawDecision[]> => {
+  const prompt = fillPromptTemplate(readPromptTemplate(), {
+    payload_json: buildSlicePayload(ledger, slice)
+  });
+
+  const raw = await runHeadlessClaude(db, {
+    cacheNamespace: `decision-map:${slice.label}`,
+    prompt,
+    cwd: getHeadlessCwd(),
+    shouldCache: (result) => (extractDecisionResponse(result) ?? []).length > 0
+  });
+
+  return extractDecisionResponse(raw) ?? [];
+};
+
+/**
+ * Experimental alternative to generateDecisionMap: fans out into one
+ * headless call per log file plus one call for transcript-derived material,
+ * instead of a single combined call, on the theory that a model given less
+ * to process per call misses fewer decisions crammed into one dense source
+ * region (a real comparison found two such misses against the single-call
+ * approach). Not wired into the IPC handler - this exists to compare
+ * extraction yield against generateDecisionMap on real project data before
+ * deciding whether the extra headless calls per generation are worth it.
+ */
+export const generateDecisionMapFannedOut = async (
+  db: StarshipDb,
+  request: DecisionMapGenerateRequest
+): Promise<DecisionRecordResult> => {
+  const generatedAt = new Date().toISOString();
+
+  const candidates = gatherDecisionCandidates(db, request);
+  if (!candidates) {
+    return emptyDecisionRecordResult(generatedAt);
+  }
+  const { logs, transcripts, clusters, excerpts, ledger, sessionDates } = candidates;
+
+  const slices = buildCandidateSlices(logs, clusters, excerpts);
+
+  try {
+    const rawDecisionLists = await Promise.all(
+      slices.map((slice) => extractSliceDecisions(db, ledger, slice))
+    );
+    const decisions = buildValidatedDecisions(
+      rawDecisionLists.flat(),
+      logs,
+      clusters,
+      excerpts,
+      sessionDates,
+      ledger !== null
+    );
 
     return {
       decisions,

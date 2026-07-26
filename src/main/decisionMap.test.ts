@@ -41,6 +41,7 @@ import {
   boundForPrompt,
   findDecisionLanguageExcerpts,
   generateDecisionMap,
+  generateDecisionMapFannedOut,
   PROMPT_PAYLOAD_BUDGET
 } from "./decisionMap";
 import { runHeadlessClaude } from "./inception/headlessClaude";
@@ -447,6 +448,103 @@ describe("generateDecisionMap", () => {
     const result = await generateDecisionMap(db, { projectId: "proj-1", projectPath: tempDir });
 
     expect(result.decisions[0].because).toBe("First reason applies. Second reason also applies.");
+  });
+});
+
+describe("generateDecisionMapFannedOut", () => {
+  it("fans out into one call per log file plus one transcript call, and merges validated decisions from all of them", async () => {
+    fs.writeFileSync(path.join(tempDir, "PROJECT_LOG.md"), "## 2026-07-20 — A\n\nChose X over Y because Z.\n", "utf8");
+    fs.writeFileSync(
+      path.join(tempDir, "BACKFILL_LOG.md"),
+      "Some backfill notes: chose P over Q because R.\n",
+      "utf8"
+    );
+    writeLines(
+      transcriptPath,
+      humanUserTurn("should we do this?"),
+      assistantText("Rather than M, we chose N because of throughput.")
+    );
+    vi.mocked(findAllTranscriptsForProject).mockReturnValue([
+      { path: transcriptPath, mtimeMs: Date.parse("2026-07-21T00:00:00.000Z") }
+    ]);
+
+    vi.mocked(runHeadlessClaude).mockImplementation(async (_db, request) => {
+      const payload = JSON.parse(request.prompt) as { logs: { file: string }[] };
+      if (payload.logs.some((l) => l.file === "PROJECT_LOG.md")) {
+        return JSON.stringify({
+          decisions: [
+            {
+              chose: "X",
+              over: "Y",
+              because: "Z.",
+              evidence: [{ source: "log", file: "PROJECT_LOG.md", anchor: "Chose X over Y because Z." }]
+            }
+          ]
+        });
+      }
+      if (payload.logs.some((l) => l.file === "BACKFILL_LOG.md")) {
+        return JSON.stringify({
+          decisions: [
+            {
+              chose: "P",
+              over: "Q",
+              because: "R.",
+              evidence: [{ source: "log", file: "BACKFILL_LOG.md", anchor: "chose P over Q because R." }]
+            }
+          ]
+        });
+      }
+      return JSON.stringify({
+        decisions: [
+          {
+            chose: "N",
+            over: "M",
+            because: "Throughput.",
+            evidence: [
+              {
+                source: "transcript",
+                sessionId: "session",
+                anchor: "Rather than M, we chose N because of throughput."
+              }
+            ]
+          }
+        ]
+      });
+    });
+
+    const db = makeDb(ledger);
+    const result = await generateDecisionMapFannedOut(db, { projectId: "proj-1", projectPath: tempDir });
+
+    expect(runHeadlessClaude).toHaveBeenCalledTimes(3);
+    expect(result.decisions.map((d) => d.chose).sort()).toEqual(["N", "P", "X"]);
+  });
+
+  it("returns an empty record with no headless calls when there are no logs or transcripts", async () => {
+    vi.mocked(findAllTranscriptsForProject).mockReturnValue([]);
+    const db = makeDb(ledger);
+
+    const result = await generateDecisionMapFannedOut(db, { projectId: "proj-1", projectPath: tempDir });
+
+    expect(result.decisions).toEqual([]);
+    expect(runHeadlessClaude).not.toHaveBeenCalled();
+  });
+
+  it("still drops a decision whose evidence anchor isn't verbatim in its named source - same validation as the single-call path", async () => {
+    fs.writeFileSync(path.join(tempDir, "PROJECT_LOG.md"), "## 2026-07-20 — A\n\nReal anchor text.\n", "utf8");
+    vi.mocked(findAllTranscriptsForProject).mockReturnValue([]);
+    mockDecisions([
+      {
+        chose: "X",
+        over: "Y",
+        because: "Z.",
+        evidence: [{ source: "log", file: "PROJECT_LOG.md", anchor: "text that was never in the log" }]
+      }
+    ]);
+
+    const db = makeDb(ledger);
+    const result = await generateDecisionMapFannedOut(db, { projectId: "proj-1", projectPath: tempDir });
+
+    expect(result.decisions).toEqual([]);
   });
 });
 
