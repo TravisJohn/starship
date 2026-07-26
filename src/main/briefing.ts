@@ -4,7 +4,9 @@ import path from "node:path";
 import type {
   BriefingGenerateRequest,
   BriefingGetLatestRequest,
-  SessionBriefing
+  BriefingListHistoryRequest,
+  SessionBriefing,
+  SessionBriefingHistoryEntry
 } from "../shared/ipc";
 import { findNewestTranscript } from "./dashboard";
 import type { StarshipDb } from "./db";
@@ -31,6 +33,12 @@ export const registerBriefingHandlers = (db: StarshipDb): void => {
     "briefing:getLatest",
     (_event, request: BriefingGetLatestRequest): SessionBriefing | null =>
       db.getSessionBriefing(request.projectId)
+  );
+
+  ipcMain.handle(
+    "briefing:listHistory",
+    (_event, request: BriefingListHistoryRequest): SessionBriefingHistoryEntry[] =>
+      db.listBriefingHistory(request.projectId)
   );
 };
 

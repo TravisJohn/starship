@@ -111,6 +111,7 @@ export const Inception = ({
         ) : (
           <RequirementsStep
             rootPath={rootPath}
+            intent={intent}
             requirements={requirements}
             onChange={setRequirements}
             onBack={() => setStep("intent")}
@@ -250,6 +251,7 @@ const IntentStep = ({
 
 type RequirementsStepProps = {
   rootPath: string | null;
+  intent: IntentInterview;
   requirements: RequirementsInterview;
   onChange: (requirements: RequirementsInterview) => void;
   onBack: () => void;
@@ -259,6 +261,7 @@ type RequirementsStepProps = {
 
 const RequirementsStep = ({
   rootPath,
+  intent,
   requirements,
   onChange,
   onBack,
@@ -307,42 +310,96 @@ const RequirementsStep = ({
             {rootPath ?? "Locate a root folder before creating a project"}
           </p>
         </div>
-        <TextArea
-          label="What is the one-line offer or premise?"
-          value={requirements.oneLiner}
-          onChange={(value) => setField("oneLiner", value)}
-          minRows={3}
-        />
-        <TextArea
-          label="What should the first working version do?"
-          value={requirements.firstVersionScope}
-          onChange={(value) => setField("firstVersionScope", value)}
-          minRows={4}
-        />
-        <TextArea
-          label="Who is it for, even if that is only you?"
-          value={requirements.audience}
-          onChange={(value) => setField("audience", value)}
-          minRows={3}
-        />
-        <TextArea
-          label="What platforms, stack, or constraints are already decided?"
-          value={requirements.stack}
-          onChange={(value) => setField("stack", value)}
-          minRows={3}
-        />
-        <TextArea
-          label="What other constraints should shape the first phase?"
-          value={requirements.constraints}
-          onChange={(value) => setField("constraints", value)}
-          minRows={3}
-        />
-        <TextArea
-          label="What is explicitly out of scope for the first version?"
-          value={requirements.outOfScope}
-          onChange={(value) => setField("outOfScope", value)}
-          minRows={3}
-        />
+        <div>
+          <TextArea
+            label="What is the one-line offer or premise?"
+            value={requirements.oneLiner}
+            onChange={(value) => setField("oneLiner", value)}
+            minRows={3}
+          />
+          <DiscussPanel
+            field="oneLiner"
+            fieldLabel="What is the one-line offer or premise?"
+            currentValue={requirements.oneLiner}
+            onApply={(value) => setField("oneLiner", value)}
+            intentContext={intent}
+          />
+        </div>
+        <div>
+          <TextArea
+            label="What should the first working version do?"
+            value={requirements.firstVersionScope}
+            onChange={(value) => setField("firstVersionScope", value)}
+            minRows={4}
+          />
+          <DiscussPanel
+            field="firstVersionScope"
+            fieldLabel="What should the first working version do?"
+            currentValue={requirements.firstVersionScope}
+            onApply={(value) => setField("firstVersionScope", value)}
+            intentContext={intent}
+          />
+        </div>
+        <div>
+          <TextArea
+            label="Who is it for, even if that is only you?"
+            value={requirements.audience}
+            onChange={(value) => setField("audience", value)}
+            minRows={3}
+          />
+          <DiscussPanel
+            field="audience"
+            fieldLabel="Who is it for, even if that is only you?"
+            currentValue={requirements.audience}
+            onApply={(value) => setField("audience", value)}
+            intentContext={intent}
+          />
+        </div>
+        <div>
+          <TextArea
+            label="What platforms, stack, or constraints are already decided?"
+            value={requirements.stack}
+            onChange={(value) => setField("stack", value)}
+            minRows={3}
+          />
+          <DiscussPanel
+            field="stack"
+            fieldLabel="What platforms, stack, or constraints are already decided?"
+            currentValue={requirements.stack}
+            onApply={(value) => setField("stack", value)}
+            intentContext={intent}
+          />
+        </div>
+        <div>
+          <TextArea
+            label="What other constraints should shape the first phase?"
+            value={requirements.constraints}
+            onChange={(value) => setField("constraints", value)}
+            minRows={3}
+          />
+          <DiscussPanel
+            field="constraints"
+            fieldLabel="What other constraints should shape the first phase?"
+            currentValue={requirements.constraints}
+            onApply={(value) => setField("constraints", value)}
+            intentContext={intent}
+          />
+        </div>
+        <div>
+          <TextArea
+            label="What is explicitly out of scope for the first version?"
+            value={requirements.outOfScope}
+            onChange={(value) => setField("outOfScope", value)}
+            minRows={3}
+          />
+          <DiscussPanel
+            field="outOfScope"
+            fieldLabel="What is explicitly out of scope for the first version?"
+            currentValue={requirements.outOfScope}
+            onApply={(value) => setField("outOfScope", value)}
+            intentContext={intent}
+          />
+        </div>
         <div className="flex justify-between gap-3">
           <button
             type="button"

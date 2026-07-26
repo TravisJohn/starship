@@ -13,7 +13,7 @@ import type {
   ProjectLogEntry,
   ProjectPhasesRequest
 } from "../shared/ipc";
-import type { StarshipDb } from "./db";
+import { emptyNoteStatusCounts, type StarshipDb } from "./db";
 import { resolveClaudeProjectDir } from "./observation/slug";
 import { parseSessionLine } from "./parser";
 
@@ -127,7 +127,7 @@ const decorateProjects = (
   forceRefresh: boolean
 ): MissionProject[] => {
   const ignoredByPath = db.getIgnoredProjectPaths(projects.map((project) => project.path));
-  const undoneNoteCounts = db.getUndoneNoteCounts(projects.map((project) => project.id));
+  const noteStatusCounts = db.getNoteStatusCounts(projects.map((project) => project.id));
 
   return projects.map((project) => {
     const transcripts = findAllTranscriptsForProject(project.path);
@@ -141,7 +141,7 @@ const decorateProjects = (
       projectLogEntry: findLatestProjectLogEntry(project.path),
       sizeBytes: getCachedProjectSizeBytes(project.path, forceRefresh),
       activityHeatmap: computeSevenDayActivity(transcripts),
-      undoneNoteCount: undoneNoteCounts.get(project.id) ?? 0
+      noteStatusCounts: noteStatusCounts.get(project.id) ?? emptyNoteStatusCounts()
     };
   });
 };

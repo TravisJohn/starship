@@ -7,8 +7,11 @@ import type {
   ObservationStatus,
   Project
 } from "../../shared/ipc";
+import { DecisionMapOverlay } from "./DecisionMapOverlay";
 import { FileMapOverlay } from "./FileMapOverlay";
 import { LoadingAnimation } from "./LoadingAnimation";
+import { NarrativeJourneyOverlay } from "./NarrativeJourneyOverlay";
+import { NOTE_STATUS_META, NOTE_STATUS_ORDER } from "../noteStatus";
 import { NotesOverlay } from "./NotesOverlay";
 import { ProjectLogOverlay } from "./ProjectLogOverlay";
 import { ProjectSummaryOverlay } from "./ProjectSummaryOverlay";
@@ -23,6 +26,8 @@ type MissionDashboardProps = {
   onEditIntent: (project: Project) => void;
   /** Live status for Starship-launched sessions in this app run. Rows with no live entry render idle. */
   statusByProjectId: Record<string, ObservationStatus>;
+  /** Projects with a session currently running in the background (kept alive after "Back to Dashboard") - their row shows "Resume" instead of "Launch". */
+  runningProjectIds: ReadonlySet<string>;
 };
 
 const emptyState: MissionDashboardState = {
@@ -34,7 +39,8 @@ export const MissionDashboard = ({
   onLaunch,
   onNewProject,
   onEditIntent,
-  statusByProjectId
+  statusByProjectId,
+  runningProjectIds
 }: MissionDashboardProps): JSX.Element => {
   const [dashboard, setDashboard] = useState<MissionDashboardState>(emptyState);
   const [loading, setLoading] = useState(true);
@@ -49,6 +55,10 @@ export const MissionDashboard = ({
     Record<string, boolean>
   >({});
   const [fileMapProject, setFileMapProject] = useState<MissionProject | null>(null);
+  const [decisionMapProject, setDecisionMapProject] = useState<MissionProject | null>(null);
+  const [narrativeJourneyProject, setNarrativeJourneyProject] = useState<MissionProject | null>(
+    null
+  );
   const [notesProject, setNotesProject] = useState<MissionProject | null>(null);
   const [projectLogProject, setProjectLogProject] =
     useState<MissionProject | null>(null);
@@ -180,6 +190,16 @@ export const MissionDashboard = ({
   const openFileMap = (project: MissionProject): void => {
     appendActivity({ eventType: "file_map_opened", projectId: project.id });
     setFileMapProject(project);
+  };
+
+  const openDecisionMap = (project: MissionProject): void => {
+    appendActivity({ eventType: "decision_map_opened", projectId: project.id });
+    setDecisionMapProject(project);
+  };
+
+  const openNarrativeJourney = (project: MissionProject): void => {
+    appendActivity({ eventType: "narrative_journey_opened", projectId: project.id });
+    setNarrativeJourneyProject(project);
   };
 
   const openNotes = (project: MissionProject): void => {
@@ -364,6 +384,9 @@ export const MissionDashboard = ({
                   <th className="w-24 overflow-hidden border-b border-zinc-800 px-3 py-2 font-medium">
                     Status
                   </th>
+                  <th className="w-32 overflow-hidden border-b border-zinc-800 px-3 py-2 font-medium">
+                    Health
+                  </th>
                   <th className="w-16 overflow-hidden border-b border-zinc-800 px-3 py-2 font-medium">
                     Ignore
                   </th>
@@ -435,6 +458,9 @@ export const MissionDashboard = ({
                         </span>
                       </div>
                     </td>
+                    <td className="w-32 overflow-hidden border-b border-zinc-900 px-3 py-3">
+                      <NoteHealth counts={project.noteStatusCounts} />
+                    </td>
                     <td className="w-16 overflow-hidden border-b border-zinc-900 px-3 py-3">
                       <input
                         type="checkbox"
@@ -495,7 +521,7 @@ export const MissionDashboard = ({
                           onClick={() => void launchProject(project)}
                           className="h-8 rounded-md border border-zinc-700 px-3 text-xs font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
                         >
-                          Launch
+                          {runningProjectIds.has(project.id) ? "Resume" : "Launch"}
                         </button>
                         <button
                           type="button"
@@ -506,20 +532,34 @@ export const MissionDashboard = ({
                         </button>
                         <button
                           type="button"
+                          onClick={() => openDecisionMap(project)}
+                          className="h-8 rounded-md border border-zinc-700 px-3 text-xs font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                        >
+                          Decision Map
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openNarrativeJourney(project)}
+                          className="h-8 rounded-md border border-zinc-700 px-3 text-xs font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                        >
+                          Narrative Journey
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => openNotes(project)}
                           className="flex h-8 items-center gap-1.5 rounded-md border border-zinc-700 px-3 text-xs font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
                         >
                           Notes
-                          {project.undoneNoteCount > 0 ? (
+                          {pendingNoteCount(project.noteStatusCounts) > 0 ? (
                             <span
-                              title={`${project.undoneNoteCount} pending note${
-                                project.undoneNoteCount === 1 ? "" : "s"
-                              }`}
+                              title={`${pendingNoteCount(project.noteStatusCounts)} note${
+                                pendingNoteCount(project.noteStatusCounts) === 1 ? "" : "s"
+                              } not yet verified`}
                               className={`flex h-4 min-w-[1rem] items-center justify-center rounded-full px-1 text-[10px] font-semibold ${noteCountBadgeClasses(
-                                project.undoneNoteCount
+                                pendingNoteCount(project.noteStatusCounts)
                               )}`}
                             >
-                              {project.undoneNoteCount}
+                              {pendingNoteCount(project.noteStatusCounts)}
                             </span>
                           ) : null}
                         </button>
@@ -539,6 +579,14 @@ export const MissionDashboard = ({
       <FileMapOverlay
         project={fileMapProject}
         onClose={() => setFileMapProject(null)}
+      />
+      <DecisionMapOverlay
+        project={decisionMapProject}
+        onClose={() => setDecisionMapProject(null)}
+      />
+      <NarrativeJourneyOverlay
+        project={narrativeJourneyProject}
+        onClose={() => setNarrativeJourneyProject(null)}
       />
       <NotesOverlay
         project={notesProject}
@@ -561,10 +609,14 @@ const applyDashboardState = (
   setError(state.scanError ?? null);
 };
 
+/** Notes not yet fully verified - the still-open action items for a project. */
+const pendingNoteCount = (counts: MissionProject["noteStatusCounts"]): number =>
+  counts.fresh + counts.implemented + counts.tested;
+
 /**
  * Green -> amber -> red "how much is piling up here" signal for pending
- * (undone) notes - a resolved note doesn't count, so this is specifically
- * an action-item temperature, not a raw note count.
+ * (not-yet-verified) notes - a verified note doesn't count, so this is
+ * specifically an action-item temperature, not a raw note count.
  */
 const noteCountBadgeClasses = (count: number): string => {
   if (count >= 5) {
@@ -635,6 +687,34 @@ const ActivityHeatmap = ({
     })}
   </div>
 );
+
+/**
+ * Per-project build-health strip: how many notes sit at each lifecycle
+ * stage (fresh -> implemented -> tested -> verified). A project that's all
+ * verified reads as healthy at a glance; one with a pile of fresh/untested
+ * notes reads as at-risk, without needing to open the Notes overlay.
+ */
+const NoteHealth = ({ counts }: { counts: MissionProject["noteStatusCounts"] }): JSX.Element => {
+  const total = NOTE_STATUS_ORDER.reduce((sum, status) => sum + counts[status], 0);
+  if (total === 0) {
+    return <span className="text-xs text-zinc-600">No notes</span>;
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {NOTE_STATUS_ORDER.filter((status) => counts[status] > 0).map((status) => (
+        <span
+          key={status}
+          title={`${counts[status]} ${NOTE_STATUS_META[status].label.toLowerCase()}`}
+          className={`flex h-5 items-center gap-1 rounded-full border px-1.5 text-[10px] font-medium ${NOTE_STATUS_META[status].badgeClass}`}
+        >
+          <span aria-hidden="true">{NOTE_STATUS_META[status].icon}</span>
+          {counts[status]}
+        </span>
+      ))}
+    </div>
+  );
+};
 
 const stringifyError = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);

@@ -59,6 +59,55 @@ export const Terminal = ({
     terminal.open(container);
     terminal.focus();
 
+    const copySelection = (): boolean => {
+      const selection = terminal.getSelection();
+      if (!selection) {
+        return false;
+      }
+      void window.starship.clipboard.writeText(selection);
+      return true;
+    };
+
+    const pasteFromClipboard = (): void => {
+      void window.starship.clipboard.readText().then((text) => {
+        if (text) {
+          terminal.paste(text);
+        }
+      });
+    };
+
+    /**
+     * xterm.js has no built-in clipboard wiring, so Ctrl+C/Ctrl+V pass
+     * straight through to the pty (SIGINT / literal bytes) unless
+     * intercepted here first. Ctrl+C only turns into "copy" when there's an
+     * active selection - with nothing selected it must still send the
+     * interrupt signal, same as any real terminal.
+     */
+    const keyEventHandler = (event: KeyboardEvent): boolean => {
+      if (event.type !== "keydown" || !(event.ctrlKey || event.metaKey)) {
+        return true;
+      }
+
+      const key = event.key.toLowerCase();
+      if (key === "c" && copySelection()) {
+        return false;
+      }
+      if (key === "v") {
+        pasteFromClipboard();
+        return false;
+      }
+      return true;
+    };
+    terminal.attachCustomKeyEventHandler(keyEventHandler);
+
+    const handleContextMenu = (event: MouseEvent): void => {
+      event.preventDefault();
+      if (!copySelection()) {
+        pasteFromClipboard();
+      }
+    };
+    container.addEventListener("contextmenu", handleContextMenu);
+
     let disposed = false;
     let spawned = false;
     let resizeTimer: number | undefined;
@@ -153,6 +202,7 @@ export const Terminal = ({
       dataDisposable.dispose();
       unsubscribeData();
       unsubscribeExit();
+      container.removeEventListener("contextmenu", handleContextMenu);
       void window.starship.pty.kill({ sessionId });
       terminal.dispose();
     };

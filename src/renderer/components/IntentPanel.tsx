@@ -4,6 +4,7 @@ import type { IntentAnnotationResult, KanbanTaskDto, TaskAnnotation } from "../.
 type IntentPanelProps = {
   projectId: string;
   projectPath: string;
+  projectName: string;
   tasks: KanbanTaskDto[];
 };
 
@@ -23,10 +24,17 @@ const SERVES_INTENT_LABEL: Record<TaskAnnotation["servesIntent"], string> = {
  * want a fresh read, same posture as Exit & Summarize and the Project Log
  * Summary click.
  */
-export const IntentPanel = ({ projectId, projectPath, tasks }: IntentPanelProps): JSX.Element => {
+export const IntentPanel = ({
+  projectId,
+  projectPath,
+  projectName,
+  tasks
+}: IntentPanelProps): JSX.Element => {
   const [result, setResult] = useState<IntentAnnotationResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportMessage, setExportMessage] = useState<string | null>(null);
 
   const check = async (): Promise<void> => {
     setLoading(true);
@@ -38,6 +46,33 @@ export const IntentPanel = ({ projectId, projectPath, tasks }: IntentPanelProps)
       setError(stringifyError(checkError));
     } finally {
       setLoading(false);
+    }
+  };
+
+  /**
+   * Raw per-task reasoning, exported verbatim to a `.jsonl` file - not
+   * synthesized or shown in-app, since that would be operational detail
+   * (CLAUDE.md's altitude discipline). Purely a hand-off artifact for
+   * whatever Travis points at it later.
+   */
+  const exportDecisions = async (): Promise<void> => {
+    setExporting(true);
+    setExportMessage(null);
+    try {
+      const response = await window.starship.decisions.export({
+        projectId,
+        projectPath,
+        projectName
+      });
+      setExportMessage(
+        response.savedPath
+          ? `Exported ${response.count} decision${response.count === 1 ? "" : "s"} to ${response.savedPath}`
+          : null
+      );
+    } catch (exportError: unknown) {
+      setExportMessage(stringifyError(exportError));
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -54,19 +89,37 @@ export const IntentPanel = ({ projectId, projectPath, tasks }: IntentPanelProps)
             Why the current plan is ordered this way, and whether it serves your stated intent.
           </p>
         </div>
-        <button
-          type="button"
-          disabled={tasks.length === 0 || loading}
-          onClick={() => void check()}
-          className={`h-8 shrink-0 whitespace-nowrap rounded-md border px-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-sky-300 ${
-            tasks.length > 0 && !loading
-              ? "border-zinc-700 text-zinc-100 hover:border-sky-400 hover:text-sky-200"
-              : "cursor-not-allowed border-zinc-800 text-zinc-500"
-          }`}
-        >
-          {loading ? "Checking…" : result ? "Re-check Against Intent" : "Check Against Intent"}
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            disabled={tasks.length === 0 || exporting}
+            onClick={() => void exportDecisions()}
+            className={`h-8 shrink-0 whitespace-nowrap rounded-md border px-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-sky-300 ${
+              tasks.length > 0 && !exporting
+                ? "border-zinc-700 text-zinc-100 hover:border-sky-400 hover:text-sky-200"
+                : "cursor-not-allowed border-zinc-800 text-zinc-500"
+            }`}
+          >
+            {exporting ? "Exporting…" : "Export Decisions"}
+          </button>
+          <button
+            type="button"
+            disabled={tasks.length === 0 || loading}
+            onClick={() => void check()}
+            className={`h-8 shrink-0 whitespace-nowrap rounded-md border px-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-sky-300 ${
+              tasks.length > 0 && !loading
+                ? "border-zinc-700 text-zinc-100 hover:border-sky-400 hover:text-sky-200"
+                : "cursor-not-allowed border-zinc-800 text-zinc-500"
+            }`}
+          >
+            {loading ? "Checking…" : result ? "Re-check Against Intent" : "Check Against Intent"}
+          </button>
+        </div>
       </header>
+
+      {exportMessage ? (
+        <p className="mx-4 mt-3 shrink-0 text-xs text-zinc-400">{exportMessage}</p>
+      ) : null}
 
       {error ? (
         <div

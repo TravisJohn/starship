@@ -29,12 +29,19 @@ vi.mock("better-sqlite3", () => {
     updated_at: string;
   };
 
+  type BriefingHistoryRow = {
+    id: number;
+    project_id: string;
+    summary: string;
+    created_at: string;
+  };
+
   type NoteRow = {
     id: string;
     project_id: string;
     text: string;
     content: string;
-    done: number;
+    status: string;
     created_at: string;
     updated_at: string;
   };
@@ -43,6 +50,8 @@ vi.mock("better-sqlite3", () => {
     private rows: ActivityLogRow[] = [];
     private nextId = 1;
     private briefings = new Map<string, SessionBriefingRow>();
+    private briefingHistory: BriefingHistoryRow[] = [];
+    private nextBriefingHistoryId = 1;
     private notes: NoteRow[] = [];
 
     pragma(): void {
@@ -53,12 +62,20 @@ vi.mock("better-sqlite3", () => {
       return undefined;
     }
 
+    transaction<T extends (...args: never[]) => unknown>(fn: T): T {
+      return fn;
+    }
+
     prepare(sql: string): {
       run: (...args: unknown[]) => { lastInsertRowid: number };
       get: (...args: unknown[]) => ActivityLogRow | SessionBriefingRow | NoteRow | undefined;
       all: (
         ...args: unknown[]
-      ) => ActivityLogRow[] | NoteRow[] | { project_id: string; count: number }[];
+      ) =>
+        | ActivityLogRow[]
+        | NoteRow[]
+        | BriefingHistoryRow[]
+        | { project_id: string; status: string; count: number }[];
     } {
       return {
         run: (...args: unknown[]) => {
@@ -87,14 +104,28 @@ vi.mock("better-sqlite3", () => {
             return { lastInsertRowid: 0 };
           }
 
+          if (sql.includes("insert into briefing_history")) {
+            const [projectId, summary, createdAt] = args as string[];
+            const id = this.nextBriefingHistoryId;
+            this.nextBriefingHistoryId += 1;
+            this.briefingHistory.push({
+              id,
+              project_id: projectId,
+              summary,
+              created_at: createdAt
+            });
+            return { lastInsertRowid: id };
+          }
+
           if (sql.includes("insert into notes")) {
-            const [id, projectId, text, content, createdAt, updatedAt] = args as string[];
+            const [id, projectId, text, content, status, createdAt, updatedAt] =
+              args as string[];
             this.notes.push({
               id,
               project_id: projectId,
               text,
               content,
-              done: 0,
+              status,
               created_at: createdAt,
               updated_at: updatedAt
             });
@@ -112,11 +143,11 @@ vi.mock("better-sqlite3", () => {
             return { lastInsertRowid: 0 };
           }
 
-          if (sql.includes("update notes set done")) {
-            const [done, updatedAt, id] = args as [number, string, string];
+          if (sql.includes("update notes set status")) {
+            const [status, updatedAt, id] = args as [string, string, string];
             const note = this.notes.find((row) => row.id === id);
             if (note) {
-              note.done = done;
+              note.status = status;
               note.updated_at = updatedAt;
             }
             return { lastInsertRowid: 0 };
@@ -149,6 +180,13 @@ vi.mock("better-sqlite3", () => {
           return undefined;
         },
         all: (...args: unknown[]) => {
+          if (sql.includes("from briefing_history")) {
+            const [projectId] = args as string[];
+            return this.briefingHistory
+              .filter((row) => row.project_id === projectId)
+              .sort((a, b) => a.id - b.id);
+          }
+
           if (sql.includes("from notes") && sql.includes("where project_id = ?")) {
             const [projectId] = args as string[];
             return this.notes
@@ -156,18 +194,22 @@ vi.mock("better-sqlite3", () => {
               .sort((a, b) => a.created_at.localeCompare(b.created_at));
           }
 
-          if (sql.includes("from notes") && sql.includes("group by project_id")) {
+          if (sql.includes("from notes") && sql.includes("group by project_id, status")) {
             const projectIds = args as string[];
-            const counts = new Map<string, number>();
+            const counts = new Map<string, Map<string, number>>();
             for (const note of this.notes) {
-              if (note.done !== 0) continue;
               if (!projectIds.includes(note.project_id)) continue;
-              counts.set(note.project_id, (counts.get(note.project_id) ?? 0) + 1);
+              const perProject = counts.get(note.project_id) ?? new Map<string, number>();
+              perProject.set(note.status, (perProject.get(note.status) ?? 0) + 1);
+              counts.set(note.project_id, perProject);
             }
-            return Array.from(counts.entries()).map(([project_id, count]) => ({
-              project_id,
-              count
-            }));
+            const rows: { project_id: string; status: string; count: number }[] = [];
+            for (const [project_id, perProject] of counts) {
+              for (const [status, count] of perProject) {
+                rows.push({ project_id, status, count });
+              }
+            }
+            return rows;
           }
 
           if (!sql.includes("from activity_log")) {
@@ -310,6 +352,39 @@ describe("StarshipDb session briefings", () => {
     expect(db.getSessionBriefing("project-a")?.summary).toBe("Summary for A.");
     expect(db.getSessionBriefing("project-b")?.summary).toBe("Summary for B.");
   });
+
+  it("returns an empty history for a project with no briefings yet", () => {
+    expect(db.listBriefingHistory("project-a")).toEqual([]);
+  });
+
+  it("appends to history on every save, unlike the single overwritten latest row", () => {
+    db.saveSessionBriefing("project-a", "First summary.");
+    db.saveSessionBriefing("project-a", "Second summary.");
+    db.saveSessionBriefing("project-a", "Third summary.");
+
+    expect(db.listBriefingHistory("project-a").map((entry) => entry.summary)).toEqual([
+      "First summary.",
+      "Second summary.",
+      "Third summary."
+    ]);
+  });
+
+  it("orders history oldest first", () => {
+    const first = db.saveSessionBriefing("project-a", "First summary.");
+    db.saveSessionBriefing("project-a", "Second summary.");
+
+    const history = db.listBriefingHistory("project-a");
+    expect(history[0].summary).toBe(first.summary);
+    expect(history[0].createdAt).toBe(first.createdAt);
+  });
+
+  it("keeps history independent per project", () => {
+    db.saveSessionBriefing("project-a", "For A.");
+    db.saveSessionBriefing("project-b", "For B.");
+
+    expect(db.listBriefingHistory("project-a")).toHaveLength(1);
+    expect(db.listBriefingHistory("project-b")).toHaveLength(1);
+  });
 });
 
 describe("StarshipDb notes", () => {
@@ -330,14 +405,14 @@ describe("StarshipDb notes", () => {
     expect(db.listNotes("project-a")).toEqual([]);
   });
 
-  it("adds a note with a subject and content, undone by default", () => {
+  it("adds a note with a subject and content, fresh by default", () => {
     const note = db.addNote({
       projectId: "project-a",
       text: "Try caching the query",
       content: "Could shave several seconds off the dashboard load."
     });
 
-    expect(note.done).toBe(false);
+    expect(note.status).toBe("fresh");
     expect(note.text).toBe("Try caching the query");
     expect(note.content).toBe("Could shave several seconds off the dashboard load.");
     expect(db.listNotes("project-a")).toEqual([note]);
@@ -363,14 +438,20 @@ describe("StarshipDb notes", () => {
     expect(db.listNotes("project-b")).toHaveLength(1);
   });
 
-  it("toggles done on and off", () => {
+  it("moves a note through its lifecycle stages", () => {
     const note = db.addNote({ projectId: "project-a", text: "Fix the bug", content: "" });
 
-    const done = db.setNoteDone(note.id, true);
-    expect(done.done).toBe(true);
+    const implemented = db.setNoteStatus(note.id, "implemented");
+    expect(implemented.status).toBe("implemented");
 
-    const undone = db.setNoteDone(note.id, false);
-    expect(undone.done).toBe(false);
+    const tested = db.setNoteStatus(note.id, "tested");
+    expect(tested.status).toBe("tested");
+
+    const verified = db.setNoteStatus(note.id, "verified");
+    expect(verified.status).toBe("verified");
+
+    const backToFresh = db.setNoteStatus(note.id, "fresh");
+    expect(backToFresh.status).toBe("fresh");
   });
 
   it("updates both subject and content", () => {
@@ -389,26 +470,38 @@ describe("StarshipDb notes", () => {
     expect(db.listNotes("project-a")).toEqual([]);
   });
 
-  it("counts only undone notes per project", () => {
+  it("counts notes per status per project", () => {
     const first = db.addNote({ projectId: "project-a", text: "First", content: "" });
     db.addNote({ projectId: "project-a", text: "Second", content: "" });
-    db.setNoteDone(first.id, true);
+    db.setNoteStatus(first.id, "verified");
     db.addNote({ projectId: "project-b", text: "Elsewhere", content: "" });
 
-    const counts = db.getUndoneNoteCounts(["project-a", "project-b"]);
-    expect(counts.get("project-a")).toBe(1);
-    expect(counts.get("project-b")).toBe(1);
+    const counts = db.getNoteStatusCounts(["project-a", "project-b"]);
+    expect(counts.get("project-a")).toEqual({
+      fresh: 1,
+      implemented: 0,
+      tested: 0,
+      verified: 1
+    });
+    expect(counts.get("project-b")).toEqual({
+      fresh: 1,
+      implemented: 0,
+      tested: 0,
+      verified: 0
+    });
   });
 
-  it("omits a project entirely from the map when it has zero undone notes", () => {
-    const note = db.addNote({ projectId: "project-a", text: "Only one", content: "" });
-    db.setNoteDone(note.id, true);
-
-    const counts = db.getUndoneNoteCounts(["project-a"]);
-    expect(counts.has("project-a")).toBe(false);
+  it("zero-fills every requested project even with no notes at all", () => {
+    const counts = db.getNoteStatusCounts(["project-a"]);
+    expect(counts.get("project-a")).toEqual({
+      fresh: 0,
+      implemented: 0,
+      tested: 0,
+      verified: 0
+    });
   });
 
   it("returns an empty map for an empty project id list", () => {
-    expect(db.getUndoneNoteCounts([])).toEqual(new Map());
+    expect(db.getNoteStatusCounts([])).toEqual(new Map());
   });
 });

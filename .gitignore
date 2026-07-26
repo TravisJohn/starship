@@ -4,3 +4,4 @@ release/
 *.tsbuildinfo
 .tmp-*.log
 acceptance-output/
+.claude/scheduled_tasks.lock

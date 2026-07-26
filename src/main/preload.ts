@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import type {
   ActivityLogEntry,
+  MenuAction,
   ObservationSnapshot,
   PtyDataEvent,
   PtyExitEvent,
@@ -48,11 +49,20 @@ const api: StarshipApi = {
   },
   briefing: {
     generate: (request) => ipcRenderer.invoke("briefing:generate", request),
-    getLatest: (request) => ipcRenderer.invoke("briefing:getLatest", request)
+    getLatest: (request) => ipcRenderer.invoke("briefing:getLatest", request),
+    listHistory: (request) => ipcRenderer.invoke("briefing:listHistory", request)
   },
   fileMap: {
     generate: (request) => ipcRenderer.invoke("fileMap:generate", request),
     download: (request) => ipcRenderer.invoke("fileMap:download", request)
+  },
+  decisionMap: {
+    generate: (request) => ipcRenderer.invoke("decisionMap:generate", request),
+    download: (request) => ipcRenderer.invoke("decisionMap:download", request)
+  },
+  narrativeJourney: {
+    generate: (request) => ipcRenderer.invoke("narrativeJourney:generate", request),
+    download: (request) => ipcRenderer.invoke("narrativeJourney:download", request)
   },
   projectLog: {
     summarize: (request) => ipcRenderer.invoke("projectLog:summarize", request)
@@ -60,14 +70,13 @@ const api: StarshipApi = {
   intent: {
     getLedger: (request) => ipcRenderer.invoke("intent:getLedger", request),
     saveLedger: (request) => ipcRenderer.invoke("intent:saveLedger", request),
-    annotate: (request) => ipcRenderer.invoke("intent:annotate", request),
-    discuss: (request) => ipcRenderer.invoke("intent:discuss", request)
+    annotate: (request) => ipcRenderer.invoke("intent:annotate", request)
   },
   notes: {
     list: (request) => ipcRenderer.invoke("notes:list", request),
     add: (request) => ipcRenderer.invoke("notes:add", request),
     update: (request) => ipcRenderer.invoke("notes:update", request),
-    setDone: (request) => ipcRenderer.invoke("notes:setDone", request),
+    setStatus: (request) => ipcRenderer.invoke("notes:setStatus", request),
     delete: (request) => ipcRenderer.invoke("notes:delete", request)
   },
   inception: {
@@ -76,7 +85,8 @@ const api: StarshipApi = {
     draftDocuments: (request) =>
       ipcRenderer.invoke("inception:draftDocuments", request),
     createProject: (request) =>
-      ipcRenderer.invoke("inception:createProject", request)
+      ipcRenderer.invoke("inception:createProject", request),
+    discuss: (request) => ipcRenderer.invoke("inception:discuss", request)
   },
   observation: {
     onSnapshot: (handler) => {
@@ -99,6 +109,25 @@ const api: StarshipApi = {
       ipcRenderer.on("activity:appended", listener);
       return () => {
         ipcRenderer.off("activity:appended", listener);
+      };
+    }
+  },
+  clipboard: {
+    readText: () => ipcRenderer.invoke("clipboard:readText"),
+    writeText: (text) => ipcRenderer.invoke("clipboard:writeText", text)
+  },
+  decisions: {
+    export: (request) => ipcRenderer.invoke("decisions:export", request)
+  },
+  menu: {
+    setSessionState: (request) => ipcRenderer.invoke("menu:setSessionState", request),
+    onAction: (handler) => {
+      const listener = (_event: IpcRendererEvent, payload: MenuAction): void => {
+        handler(payload);
+      };
+      ipcRenderer.on("menu:action", listener);
+      return () => {
+        ipcRenderer.off("menu:action", listener);
       };
     }
   }

@@ -15,17 +15,17 @@ vi.mock("./inception/headlessClaude", () => ({
 }));
 
 import { runHeadlessClaude } from "./inception/headlessClaude";
-import { generateDiscussReply } from "./intentDiscuss";
+import { generateDiscussReply } from "./inceptionDiscuss";
 
 let tempDir: string;
 let previousPromptDir: string | undefined;
 
 beforeEach(() => {
-  tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "starship-intent-discuss-"));
+  tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "starship-inception-discuss-"));
   previousPromptDir = process.env.STARSHIP_PROMPT_DIR;
   process.env.STARSHIP_PROMPT_DIR = tempDir;
   fs.writeFileSync(
-    path.join(tempDir, "intent-discuss.md"),
+    path.join(tempDir, "inception-discuss.md"),
     "Discuss.\n\nInput:\n{{payload_json}}",
     "utf8"
   );
@@ -107,6 +107,66 @@ describe("generateDiscussReply", () => {
     expect(result.proposedRewrite).toBe(
       "To learn Electron's IPC model by building something real."
     );
+  });
+
+  it("works for a requirements-step field, not just intent fields", async () => {
+    vi.mocked(runHeadlessClaude).mockResolvedValue(
+      JSON.stringify({
+        reply: "Who specifically hits this friction today?",
+        proposedRewrite: null
+      })
+    );
+
+    const result = await generateDiscussReply(makeDb(), {
+      field: "audience",
+      fieldLabel: "Who is it for, even if that is only you?",
+      currentValue: "",
+      history: [],
+      message: "Just me for now, but maybe others later."
+    });
+
+    expect(result.reply).toBe("Who specifically hits this friction today?");
+  });
+
+  it("embeds the intent ledger in the prompt when intentContext is provided", async () => {
+    vi.mocked(runHeadlessClaude).mockResolvedValue(
+      JSON.stringify({ reply: "Noted.", proposedRewrite: null })
+    );
+
+    await generateDiscussReply(makeDb(), {
+      field: "outOfScope",
+      fieldLabel: "What is explicitly out of scope for the first version?",
+      currentValue: "",
+      history: [],
+      message: "Should multi-user support be out of scope?",
+      intentContext: {
+        purpose: "Help one person track their own habits.",
+        successCriteria: "Used daily for a month.",
+        acceptedTradeoffs: "No polish, just function.",
+        neverDo: "Become a multi-user product.",
+        learningGoal: "Learn SQLite."
+      }
+    });
+
+    const prompt = vi.mocked(runHeadlessClaude).mock.calls[0][1].prompt;
+    expect(prompt).toContain("Become a multi-user product.");
+  });
+
+  it("omits intentContext from the prompt payload when not provided", async () => {
+    vi.mocked(runHeadlessClaude).mockResolvedValue(
+      JSON.stringify({ reply: "Got it.", proposedRewrite: null })
+    );
+
+    await generateDiscussReply(makeDb(), {
+      field: "purpose",
+      fieldLabel: "Why should this project exist?",
+      currentValue: "",
+      history: [],
+      message: "I want to learn Electron."
+    });
+
+    const prompt = vi.mocked(runHeadlessClaude).mock.calls[0][1].prompt;
+    expect(prompt).toContain('"intentContext": null');
   });
 
   it("degrades gracefully when the headless call fails", async () => {

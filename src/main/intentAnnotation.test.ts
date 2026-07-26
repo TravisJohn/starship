@@ -23,6 +23,7 @@ import { findNewestTranscript } from "./dashboard";
 import { runHeadlessClaude } from "./inception/headlessClaude";
 import {
   buildTaskReasoningTimeline,
+  buildTaskReasoningTimelineForProject,
   generateIntentAnnotation,
   matchReasoningToTasks
 } from "./intentAnnotation";
@@ -151,6 +152,61 @@ describe("buildTaskReasoningTimeline", () => {
 
     expect(buildTaskReasoningTimeline(transcriptPath)).toEqual([
       { label: "Still captured", reasoning: null }
+    ]);
+  });
+});
+
+describe("buildTaskReasoningTimelineForProject", () => {
+  it("returns [] for an empty transcript list", () => {
+    expect(buildTaskReasoningTimelineForProject([])).toEqual([]);
+  });
+
+  it("concatenates decisions across multiple transcripts in order", () => {
+    const firstPath = path.join(tempDir, "first.jsonl");
+    const secondPath = path.join(tempDir, "second.jsonl");
+    fs.writeFileSync(
+      firstPath,
+      [assistantText("Kick off the board module."), incrementalTaskCreate("Build the board module")]
+        .map((r) => JSON.stringify(r))
+        .join("\n") + "\n",
+      "utf8"
+    );
+    fs.writeFileSync(
+      secondPath,
+      [assistantText("Now wire up scoring."), incrementalTaskCreate("Add scoring")]
+        .map((r) => JSON.stringify(r))
+        .join("\n") + "\n",
+      "utf8"
+    );
+
+    expect(buildTaskReasoningTimelineForProject([firstPath, secondPath])).toEqual([
+      { label: "Build the board module", reasoning: "Kick off the board module.", sessionIndex: 0 },
+      { label: "Add scoring", reasoning: "Now wire up scoring.", sessionIndex: 1 }
+    ]);
+  });
+
+  it("resets reasoning at each transcript boundary - a later session's task never inherits an earlier session's trailing text", () => {
+    const firstPath = path.join(tempDir, "first.jsonl");
+    const secondPath = path.join(tempDir, "second.jsonl");
+    fs.writeFileSync(
+      firstPath,
+      JSON.stringify(assistantText("Leftover reasoning from session one.")) + "\n",
+      "utf8"
+    );
+    fs.writeFileSync(secondPath, JSON.stringify(incrementalTaskCreate("Task in session two")) + "\n", "utf8");
+
+    expect(buildTaskReasoningTimelineForProject([firstPath, secondPath])).toEqual([
+      { label: "Task in session two", reasoning: null, sessionIndex: 1 }
+    ]);
+  });
+
+  it("skips a transcript that can't be read rather than throwing", () => {
+    const missingPath = path.join(tempDir, "missing.jsonl");
+    const secondPath = path.join(tempDir, "second.jsonl");
+    fs.writeFileSync(secondPath, JSON.stringify(incrementalTaskCreate("Still captured")) + "\n", "utf8");
+
+    expect(buildTaskReasoningTimelineForProject([missingPath, secondPath])).toEqual([
+      { label: "Still captured", reasoning: null, sessionIndex: 1 }
     ]);
   });
 });

@@ -8,10 +8,14 @@ import type {
   IntentLedger,
   IntentLedgerInput,
   Note,
+  NoteStatus,
+  NoteStatusCounts,
   Project,
   ProjectId,
-  SessionBriefing
+  SessionBriefing,
+  SessionBriefingHistoryEntry
 } from "../shared/ipc";
+import { NOTE_STATUS_ORDER } from "../shared/ipc";
 
 type ProjectRow = {
   id: string;
@@ -58,12 +62,19 @@ type SessionBriefingRow = {
   updated_at: string;
 };
 
+type BriefingHistoryRow = {
+  id: number;
+  project_id: string;
+  summary: string;
+  created_at: string;
+};
+
 type NoteRow = {
   id: string;
   project_id: string;
   text: string;
   content: string;
-  done: number;
+  status: NoteStatus;
   created_at: string;
   updated_at: string;
 };
@@ -127,6 +138,13 @@ export class StarshipDb {
         updated_at text not null
       );
 
+      create table if not exists briefing_history (
+        id integer primary key autoincrement,
+        project_id text not null references projects(id) on delete cascade,
+        summary text not null,
+        created_at text not null
+      );
+
       create table if not exists notes (
         id text primary key,
         project_id text not null references projects(id) on delete cascade,
@@ -138,6 +156,7 @@ export class StarshipDb {
     `);
 
     this.migrateNotesContentColumn();
+    this.migrateNotesStatusColumn();
   }
 
   /**
@@ -151,6 +170,24 @@ export class StarshipDb {
     const columns = this.db.prepare("pragma table_info(notes)").all() as { name: string }[];
     if (!columns.some((column) => column.name === "content")) {
       this.db.exec("alter table notes add column content text not null default ''");
+    }
+  }
+
+  /**
+   * Notes originally tracked only a done/undone boolean. That's replaced by
+   * a four-stage lifecycle (fresh -> implemented -> tested -> verified) so
+   * the dashboard can show real build health instead of a flat checkbox.
+   * Existing done=1 rows become "verified" (the closest equivalent -
+   * resolved and no longer a pending action item); everything else starts
+   * "fresh". The old `done` column is left in place rather than dropped -
+   * harmless, and avoids relying on DROP COLUMN support across SQLite
+   * versions.
+   */
+  private migrateNotesStatusColumn(): void {
+    const columns = this.db.prepare("pragma table_info(notes)").all() as { name: string }[];
+    if (!columns.some((column) => column.name === "status")) {
+      this.db.exec("alter table notes add column status text not null default 'fresh'");
+      this.db.exec("update notes set status = 'verified' where done = 1");
     }
   }
 
@@ -422,32 +459,61 @@ export class StarshipDb {
   }
 
   /**
-   * One row per project - the *latest* briefing only, not a history log.
-   * A Timeline assembling every past briefing is explicitly later PRD scope
-   * (§7); this just needs "what should the Terminal page show right now."
+   * Updates the single "latest briefing" row (used for the Terminal page's
+   * "since last time" banner) and, in the same transaction, appends an
+   * immutable row to briefing_history - the Timeline's raw material. The
+   * history only ever grows on a real "Exit & Summarize"; nothing backfills
+   * it retroactively.
    */
   saveSessionBriefing(projectId: ProjectId, summary: string): SessionBriefing {
     const now = new Date().toISOString();
     const existing = this.getSessionBriefing(projectId);
     const createdAt = existing?.createdAt ?? now;
 
-    this.db
-      .prepare(
-        `insert into session_briefings (project_id, summary, created_at, updated_at)
-         values (?, ?, ?, ?)
-         on conflict(project_id) do update set
-           summary = excluded.summary,
-           updated_at = excluded.updated_at`
-      )
-      .run(projectId, summary, createdAt, now);
+    const save = this.db.transaction(() => {
+      this.db
+        .prepare(
+          `insert into session_briefings (project_id, summary, created_at, updated_at)
+           values (?, ?, ?, ?)
+           on conflict(project_id) do update set
+             summary = excluded.summary,
+             updated_at = excluded.updated_at`
+        )
+        .run(projectId, summary, createdAt, now);
+
+      this.db
+        .prepare(
+          `insert into briefing_history (project_id, summary, created_at)
+           values (?, ?, ?)`
+        )
+        .run(projectId, summary, now);
+    });
+    save();
 
     return { projectId, summary, createdAt, updatedAt: now };
+  }
+
+  /**
+   * Every past briefing for a project, oldest first - the Timeline pane's
+   * idea-to-reality narrative (PRD §7). Never trimmed or backfilled.
+   */
+  listBriefingHistory(projectId: ProjectId): SessionBriefingHistoryEntry[] {
+    const rows = this.db
+      .prepare(
+        `select id, project_id, summary, created_at
+         from briefing_history
+         where project_id = ?
+         order by id asc`
+      )
+      .all(projectId) as BriefingHistoryRow[];
+
+    return rows.map(rowToBriefingHistoryEntry);
   }
 
   listNotes(projectId: ProjectId): Note[] {
     const rows = this.db
       .prepare(
-        `select id, project_id, text, content, done, created_at, updated_at
+        `select id, project_id, text, content, status, created_at, updated_at
          from notes
          where project_id = ?
          order by created_at asc`
@@ -458,47 +524,60 @@ export class StarshipDb {
   }
 
   /**
-   * Undone notes only - a resolved note isn't a pending action item, so it
-   * shouldn't count toward the dashboard's "how hot is this project"
-   * signal. Batched (same shape as getIgnoredProjectPaths) rather than one
-   * query per project.
+   * Per-status note counts per project - the dashboard's "how healthy is
+   * this project" signal. Every requested project id is present in the
+   * returned map with all four counts (zero-filled), so callers never need
+   * a fallback. Batched (same shape as getIgnoredProjectPaths) rather than
+   * one query per project.
    */
-  getUndoneNoteCounts(projectIds: ProjectId[]): Map<string, number> {
+  getNoteStatusCounts(projectIds: ProjectId[]): Map<string, NoteStatusCounts> {
     const uniqueIds = Array.from(new Set(projectIds));
+    const result = new Map<string, NoteStatusCounts>(
+      uniqueIds.map((id) => [id, emptyNoteStatusCounts()])
+    );
+
     if (uniqueIds.length === 0) {
-      return new Map();
+      return result;
     }
 
     const placeholders = uniqueIds.map(() => "?").join(", ");
     const rows = this.db
       .prepare(
-        `select project_id, count(*) as count
+        `select project_id, status, count(*) as count
          from notes
-         where done = 0 and project_id in (${placeholders})
-         group by project_id`
+         where project_id in (${placeholders})
+         group by project_id, status`
       )
-      .all(...uniqueIds) as { project_id: string; count: number }[];
+      .all(...uniqueIds) as { project_id: string; status: NoteStatus; count: number }[];
 
-    return new Map(rows.map((row) => [row.project_id, row.count]));
+    for (const row of rows) {
+      const counts = result.get(row.project_id);
+      if (counts) {
+        counts[row.status] = row.count;
+      }
+    }
+
+    return result;
   }
 
   addNote(input: { projectId: ProjectId; text: string; content: string }): Note {
     const id = randomUUID();
     const now = new Date().toISOString();
+    const status: NoteStatus = "fresh";
 
     this.db
       .prepare(
-        `insert into notes (id, project_id, text, content, done, created_at, updated_at)
-         values (?, ?, ?, ?, 0, ?, ?)`
+        `insert into notes (id, project_id, text, content, status, created_at, updated_at)
+         values (?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(id, input.projectId, input.text, input.content, now, now);
+      .run(id, input.projectId, input.text, input.content, status, now, now);
 
     return {
       id,
       projectId: input.projectId,
       text: input.text,
       content: input.content,
-      done: false,
+      status,
       createdAt: now,
       updatedAt: now
     };
@@ -513,11 +592,11 @@ export class StarshipDb {
     return this.getNote(noteId);
   }
 
-  setNoteDone(noteId: string, done: boolean): Note {
+  setNoteStatus(noteId: string, status: NoteStatus): Note {
     const now = new Date().toISOString();
     this.db
-      .prepare(`update notes set done = ?, updated_at = ? where id = ?`)
-      .run(done ? 1 : 0, now, noteId);
+      .prepare(`update notes set status = ?, updated_at = ? where id = ?`)
+      .run(status, now, noteId);
 
     return this.getNote(noteId);
   }
@@ -529,7 +608,7 @@ export class StarshipDb {
   private getNote(noteId: string): Note {
     const row = this.db
       .prepare(
-        `select id, project_id, text, content, done, created_at, updated_at
+        `select id, project_id, text, content, status, created_at, updated_at
          from notes
          where id = ?`
       )
@@ -585,9 +664,9 @@ export const registerNotesHandlers = (db: StarshipDb): void => {
   );
 
   ipcMain.handle(
-    "notes:setDone",
-    (_event, request: { noteId: string; done: boolean }): Note =>
-      db.setNoteDone(request.noteId, request.done)
+    "notes:setStatus",
+    (_event, request: { noteId: string; status: NoteStatus }): Note =>
+      db.setNoteStatus(request.noteId, request.status)
   );
 
   ipcMain.handle("notes:delete", (_event, request: { noteId: string }): void =>
@@ -627,14 +706,28 @@ const rowToSessionBriefing = (row: SessionBriefingRow): SessionBriefing => ({
   updatedAt: row.updated_at
 });
 
+const rowToBriefingHistoryEntry = (row: BriefingHistoryRow): SessionBriefingHistoryEntry => ({
+  id: row.id,
+  projectId: row.project_id,
+  summary: row.summary,
+  createdAt: row.created_at
+});
+
 const rowToNote = (row: NoteRow): Note => ({
   id: row.id,
   projectId: row.project_id,
   text: row.text,
   content: row.content,
-  done: row.done === 1,
+  status: row.status,
   createdAt: row.created_at,
   updatedAt: row.updated_at
+});
+
+export const emptyNoteStatusCounts = (): NoteStatusCounts => ({
+  fresh: 0,
+  implemented: 0,
+  tested: 0,
+  verified: 0
 });
 
 const normalizeActivityLimit = (limit: number | undefined): number => {

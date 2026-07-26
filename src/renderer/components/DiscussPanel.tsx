@@ -2,24 +2,26 @@ import { useState } from "react";
 import type { DiscussMessage, IntentInterview } from "../../shared/ipc";
 
 type DiscussPanelProps = {
-  field: keyof IntentInterview;
+  field: string;
   fieldLabel: string;
   currentValue: string;
   onApply: (rewrite: string) => void;
+  intentContext?: IntentInterview;
 };
 
 /**
  * Multi-turn but never automatic - every turn is its own explicit "Send"
  * click, same posture as every other headless-call feature in this app.
  * Each call resends the full thread since `claude -p` has no session-resume
- * concept here; see intentDiscuss.ts. A proposed rewrite is only ever a
+ * concept here; see inceptionDiscuss.ts. A proposed rewrite is only ever a
  * suggestion - applying it into the field is a separate, explicit click.
  */
 export const DiscussPanel = ({
   field,
   fieldLabel,
   currentValue,
-  onApply
+  onApply,
+  intentContext
 }: DiscussPanelProps): JSX.Element => {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<DiscussMessage[]>([]);
@@ -39,12 +41,13 @@ export const DiscussPanel = ({
     setSending(true);
 
     try {
-      const response = await window.starship.intent.discuss({
+      const response = await window.starship.inception.discuss({
         field,
         fieldLabel,
         currentValue,
         history,
-        message
+        message,
+        intentContext
       });
       setMessages((current) => [...current, { role: "assistant", text: response.reply }]);
       setProposedRewrite(response.proposedRewrite);

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Note } from "../../shared/ipc";
+import { NOTE_STATUS_META, nextNoteStatus } from "../noteStatus";
 
 type NotesPanelProps = {
   projectId: string;
@@ -81,18 +82,18 @@ export const NotesPanel = ({ projectId }: NotesPanelProps): JSX.Element => {
     }
   };
 
-  const toggleDone = async (note: Note): Promise<void> => {
-    const nextDone = !note.done;
+  const advanceStatus = async (note: Note): Promise<void> => {
+    const nextStatus = nextNoteStatus(note.status);
     setNotes((current) =>
-      current.map((item) => (item.id === note.id ? { ...item, done: nextDone } : item))
+      current.map((item) => (item.id === note.id ? { ...item, status: nextStatus } : item))
     );
     try {
-      await window.starship.notes.setDone({ noteId: note.id, done: nextDone });
-    } catch (toggleError: unknown) {
+      await window.starship.notes.setStatus({ noteId: note.id, status: nextStatus });
+    } catch (statusError: unknown) {
       setNotes((current) =>
-        current.map((item) => (item.id === note.id ? { ...item, done: note.done } : item))
+        current.map((item) => (item.id === note.id ? { ...item, status: note.status } : item))
       );
-      setError(stringifyError(toggleError));
+      setError(stringifyError(statusError));
     }
   };
 
@@ -244,12 +245,18 @@ export const NotesPanel = ({ projectId }: NotesPanelProps): JSX.Element => {
                     </div>
                   ) : (
                     <div className="flex items-start gap-2">
-                      <input
-                        type="checkbox"
-                        checked={note.done}
-                        onChange={() => void toggleDone(note)}
-                        className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded border-zinc-700 bg-zinc-900 text-sky-500 focus:ring-sky-300"
-                      />
+                      <button
+                        type="button"
+                        onClick={() => void advanceStatus(note)}
+                        title={`${NOTE_STATUS_META[note.status].label} — click to advance to ${
+                          NOTE_STATUS_META[nextNoteStatus(note.status)].label
+                        }`}
+                        className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-xs leading-none focus:outline-none focus:ring-2 focus:ring-sky-300 ${
+                          NOTE_STATUS_META[note.status].badgeClass
+                        }`}
+                      >
+                        {NOTE_STATUS_META[note.status].icon}
+                      </button>
                       <button
                         type="button"
                         onClick={() => startEdit(note)}
@@ -257,7 +264,9 @@ export const NotesPanel = ({ projectId }: NotesPanelProps): JSX.Element => {
                       >
                         <p
                           className={
-                            note.done ? "text-zinc-500 line-through" : "font-medium text-zinc-200"
+                            note.status === "verified"
+                              ? "text-zinc-500 line-through"
+                              : "font-medium text-zinc-200"
                           }
                         >
                           {note.text}
@@ -265,7 +274,7 @@ export const NotesPanel = ({ projectId }: NotesPanelProps): JSX.Element => {
                         {note.content ? (
                           <p
                             className={`mt-1 whitespace-pre-wrap ${
-                              note.done ? "text-zinc-600 line-through" : "text-zinc-400"
+                              note.status === "verified" ? "text-zinc-600 line-through" : "text-zinc-400"
                             }`}
                           >
                             {note.content}

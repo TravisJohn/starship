@@ -16,7 +16,7 @@ export type MissionProject = Project & {
   projectLogEntry: ProjectLogEntry | null;
   sizeBytes: number | null;
   activityHeatmap: { date: string; count: number }[];
-  undoneNoteCount: number;
+  noteStatusCounts: NoteStatusCounts;
 };
 
 export type PrdPhase = {
@@ -57,12 +57,29 @@ export type SessionBriefing = {
   updatedAt: string;
 };
 
+/**
+ * Lifecycle stage of a note's underlying work, in progression order:
+ * captured but untouched -> code written -> tests written/passing ->
+ * confirmed working in the real app. Mirrors the SDLC stages a change
+ * normally passes through rather than a flat done/not-done toggle.
+ */
+export type NoteStatus = "fresh" | "implemented" | "tested" | "verified";
+
+export const NOTE_STATUS_ORDER: NoteStatus[] = [
+  "fresh",
+  "implemented",
+  "tested",
+  "verified"
+];
+
+export type NoteStatusCounts = Record<NoteStatus, number>;
+
 export type Note = {
   id: string;
   projectId: ProjectId;
   text: string;
   content: string;
-  done: boolean;
+  status: NoteStatus;
   createdAt: string;
   updatedAt: string;
 };
@@ -83,9 +100,9 @@ export type NoteUpdateRequest = {
   content: string;
 };
 
-export type NoteSetDoneRequest = {
+export type NoteSetStatusRequest = {
   noteId: string;
-  done: boolean;
+  status: NoteStatus;
 };
 
 export type NoteDeleteRequest = {
@@ -99,6 +116,40 @@ export type BriefingGenerateRequest = {
 
 export type BriefingGetLatestRequest = {
   projectId: ProjectId;
+};
+
+/**
+ * One entry per past "Exit & Summarize" - the Timeline pane's raw material.
+ * Distinct from SessionBriefing (which is just the latest, used for the
+ * "since last time" banner): this is append-only history, never overwritten.
+ */
+export type SessionBriefingHistoryEntry = {
+  id: number;
+  projectId: ProjectId;
+  summary: string;
+  createdAt: string;
+};
+
+export type BriefingListHistoryRequest = {
+  projectId: ProjectId;
+};
+
+/**
+ * Per-task rationale, exported verbatim (no synthesis/annotation) as a
+ * `.jsonl` file for Travis to feed to a separate, smaller model later - a
+ * raw decision trace, not a decision-altitude UI surface. Reuses the same
+ * TaskCreate-preceding-reasoning capture the Intent annotation pass already
+ * builds (intentAnnotation.ts's buildTaskReasoningTimeline).
+ */
+export type DecisionsExportRequest = {
+  projectId: ProjectId;
+  projectPath: string;
+  projectName: string;
+};
+
+export type DecisionsExportResponse = {
+  savedPath: string | null;
+  count: number;
 };
 
 export type FileMapGenerateRequest = {
@@ -236,17 +287,100 @@ export type IntentAnnotationResult = {
   generatedAt: string;
 };
 
+/**
+ * A cumulative, whole-project-history decision graph - every TaskCreate
+ * across every session this project has ever had, plus the logical (not
+ * just chronological) relationships between them. The graph-shaped sibling
+ * of the Timeline's prose narrative and Decisions Export's raw JSONL.
+ */
+export type DecisionMapNode = {
+  id: string;
+  label: string;
+  servesIntent: TaskAnnotation["servesIntent"];
+  sessionIndex: number;
+};
+
+export type DecisionMapEdge = {
+  from: string;
+  to: string;
+  reason: string;
+};
+
+export type DecisionMapResult = {
+  nodes: DecisionMapNode[];
+  edges: DecisionMapEdge[];
+  generatedAt: string;
+};
+
+export type DecisionMapGenerateRequest = {
+  projectId: ProjectId;
+  projectPath: string;
+};
+
+export type DecisionMapGenerateResponse = {
+  html: string;
+  nodeCount: number;
+  edgeCount: number;
+  generatedAt: string;
+};
+
+export type DecisionMapDownloadRequest = {
+  html: string;
+  projectName: string;
+};
+
+export type DecisionMapDownloadResponse = {
+  savedPath: string | null;
+};
+
+/**
+ * The project's whole history, told as one story rather than a per-session
+ * list (that's the Timeline) or a graph (that's the Decision Map). Built
+ * from the same briefing_history rows Timeline already reads, woven
+ * together in one headless pass.
+ */
+export type NarrativeJourneyChapter = {
+  title: string;
+  narrative: string;
+};
+
+export type NarrativeJourneyResult = {
+  chapters: NarrativeJourneyChapter[];
+  generatedAt: string;
+};
+
+export type NarrativeJourneyGenerateRequest = {
+  projectId: ProjectId;
+  projectPath: string;
+};
+
+export type NarrativeJourneyGenerateResponse = {
+  chapters: NarrativeJourneyChapter[];
+  markdown: string;
+  generatedAt: string;
+};
+
+export type NarrativeJourneyDownloadRequest = {
+  markdown: string;
+  projectName: string;
+};
+
+export type NarrativeJourneyDownloadResponse = {
+  savedPath: string | null;
+};
+
 export type DiscussMessage = {
   role: "user" | "assistant";
   text: string;
 };
 
 export type DiscussFieldRequest = {
-  field: keyof IntentInterview;
+  field: string;
   fieldLabel: string;
   currentValue: string;
   history: DiscussMessage[];
   message: string;
+  intentContext?: IntentInterview;
 };
 
 export type DiscussFieldResponse = {
@@ -360,6 +494,20 @@ export type ObservationSnapshot = {
   subagents: SubagentEntryDto[];
 };
 
+export type ActiveSessionPanel = "terminal" | "fileMap" | "intent" | "timeline" | "decisionMap";
+
+export type MenuSessionState = {
+  active: boolean;
+  projectName: string | null;
+  panel: ActiveSessionPanel;
+};
+
+export type MenuAction =
+  | { type: "setPanel"; panel: ActiveSessionPanel }
+  | { type: "backToDashboard" }
+  | { type: "closeSession" }
+  | { type: "exitAndSummarize" };
+
 export type RendererToMainInvokeMap = {
   "pty:spawn": {
     request: PtySpawnRequest;
@@ -417,6 +565,10 @@ export type RendererToMainInvokeMap = {
     request: BriefingGetLatestRequest;
     response: SessionBriefing | null;
   };
+  "briefing:listHistory": {
+    request: BriefingListHistoryRequest;
+    response: SessionBriefingHistoryEntry[];
+  };
   "fileMap:generate": {
     request: FileMapGenerateRequest;
     response: FileMapGenerateResponse;
@@ -424,6 +576,22 @@ export type RendererToMainInvokeMap = {
   "fileMap:download": {
     request: FileMapDownloadRequest;
     response: FileMapDownloadResponse;
+  };
+  "decisionMap:generate": {
+    request: DecisionMapGenerateRequest;
+    response: DecisionMapGenerateResponse;
+  };
+  "decisionMap:download": {
+    request: DecisionMapDownloadRequest;
+    response: DecisionMapDownloadResponse;
+  };
+  "narrativeJourney:generate": {
+    request: NarrativeJourneyGenerateRequest;
+    response: NarrativeJourneyGenerateResponse;
+  };
+  "narrativeJourney:download": {
+    request: NarrativeJourneyDownloadRequest;
+    response: NarrativeJourneyDownloadResponse;
   };
   "projectLog:summarize": {
     request: ProjectLogSummarizeRequest;
@@ -449,10 +617,6 @@ export type RendererToMainInvokeMap = {
     request: IntentAnnotationRequest;
     response: IntentAnnotationResult;
   };
-  "intent:discuss": {
-    request: DiscussFieldRequest;
-    response: DiscussFieldResponse;
-  };
   "notes:list": {
     request: NotesListRequest;
     response: Note[];
@@ -465,8 +629,8 @@ export type RendererToMainInvokeMap = {
     request: NoteUpdateRequest;
     response: Note;
   };
-  "notes:setDone": {
-    request: NoteSetDoneRequest;
+  "notes:setStatus": {
+    request: NoteSetStatusRequest;
     response: Note;
   };
   "notes:delete": {
@@ -485,6 +649,26 @@ export type RendererToMainInvokeMap = {
     request: InceptionCreateProjectRequest;
     response: InceptionCreateProjectResponse;
   };
+  "inception:discuss": {
+    request: DiscussFieldRequest;
+    response: DiscussFieldResponse;
+  };
+  "clipboard:readText": {
+    request: void;
+    response: string;
+  };
+  "clipboard:writeText": {
+    request: string;
+    response: void;
+  };
+  "decisions:export": {
+    request: DecisionsExportRequest;
+    response: DecisionsExportResponse;
+  };
+  "menu:setSessionState": {
+    request: MenuSessionState;
+    response: void;
+  };
 };
 
 export type MainToRendererEventMap = {
@@ -492,6 +676,7 @@ export type MainToRendererEventMap = {
   "pty:exit": PtyExitEvent;
   "observation:snapshot": ObservationSnapshot;
   "activity:appended": ActivityLogEntry;
+  "menu:action": MenuAction;
 };
 
 export type IpcInvokeChannel = keyof RendererToMainInvokeMap;
@@ -531,10 +716,19 @@ export type StarshipApi = {
   briefing: {
     generate: (request: BriefingGenerateRequest) => Promise<SessionBriefing>;
     getLatest: (request: BriefingGetLatestRequest) => Promise<SessionBriefing | null>;
+    listHistory: (request: BriefingListHistoryRequest) => Promise<SessionBriefingHistoryEntry[]>;
   };
   fileMap: {
     generate: (request: FileMapGenerateRequest) => Promise<FileMapGenerateResponse>;
     download: (request: FileMapDownloadRequest) => Promise<FileMapDownloadResponse>;
+  };
+  decisionMap: {
+    generate: (request: DecisionMapGenerateRequest) => Promise<DecisionMapGenerateResponse>;
+    download: (request: DecisionMapDownloadRequest) => Promise<DecisionMapDownloadResponse>;
+  };
+  narrativeJourney: {
+    generate: (request: NarrativeJourneyGenerateRequest) => Promise<NarrativeJourneyGenerateResponse>;
+    download: (request: NarrativeJourneyDownloadRequest) => Promise<NarrativeJourneyDownloadResponse>;
   };
   projectLog: {
     summarize: (
@@ -545,13 +739,12 @@ export type StarshipApi = {
     getLedger: (request: IntentLedgerRequest) => Promise<IntentLedger | null>;
     saveLedger: (request: IntentLedgerInput) => Promise<IntentLedger>;
     annotate: (request: IntentAnnotationRequest) => Promise<IntentAnnotationResult>;
-    discuss: (request: DiscussFieldRequest) => Promise<DiscussFieldResponse>;
   };
   notes: {
     list: (request: NotesListRequest) => Promise<Note[]>;
     add: (request: NoteAddRequest) => Promise<Note>;
     update: (request: NoteUpdateRequest) => Promise<Note>;
-    setDone: (request: NoteSetDoneRequest) => Promise<Note>;
+    setStatus: (request: NoteSetStatusRequest) => Promise<Note>;
     delete: (request: NoteDeleteRequest) => Promise<void>;
   };
   inception: {
@@ -564,6 +757,7 @@ export type StarshipApi = {
     createProject: (
       request: InceptionCreateProjectRequest
     ) => Promise<InceptionCreateProjectResponse>;
+    discuss: (request: DiscussFieldRequest) => Promise<DiscussFieldResponse>;
   };
   observation: {
     onSnapshot: (handler: (snapshot: ObservationSnapshot) => void) => Unsubscribe;
@@ -572,5 +766,16 @@ export type StarshipApi = {
     append: (request: ActivityAppendRequest) => Promise<ActivityLogEntry>;
     list: (request: ActivityListRequest) => Promise<ActivityLogEntry[]>;
     onAppended: (handler: (entry: ActivityLogEntry) => void) => Unsubscribe;
+  };
+  clipboard: {
+    readText: () => Promise<string>;
+    writeText: (text: string) => Promise<void>;
+  };
+  decisions: {
+    export: (request: DecisionsExportRequest) => Promise<DecisionsExportResponse>;
+  };
+  menu: {
+    setSessionState: (request: MenuSessionState) => Promise<void>;
+    onAction: (handler: (action: MenuAction) => void) => Unsubscribe;
   };
 };

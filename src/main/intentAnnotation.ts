@@ -34,23 +34,15 @@ export const registerIntentAnnotationHandlers = (db: StarshipDb): void => {
 };
 
 /**
- * Reads a single transcript and extracts the nearest-preceding assistant
- * reasoning text for every `TaskCreate` call, in the order those calls
+ * Extracts the nearest-preceding assistant reasoning text for every
+ * `TaskCreate` call in one transcript's content, in the order those calls
  * appear. Deliberately does not track `TaskUpdate` - a status change doesn't
  * need its own rationale, only the original creation/positioning does.
  *
  * Mirrors buildSessionNarrative/buildFileTouchTimeline's tolerant per-line
- * JSON parse (skip unparseable lines, never throw) - this is a single
- * transcript, not cross-session, so `mostRecentText` is never reset mid-scan.
+ * JSON parse (skip unparseable lines, never throw).
  */
-export const buildTaskReasoningTimeline = (transcriptPath: string): TaskReasoning[] => {
-  let content: string;
-  try {
-    content = fs.readFileSync(transcriptPath, "utf8");
-  } catch {
-    return [];
-  }
-
+const extractTaskReasoningFromContent = (content: string): TaskReasoning[] => {
   const timeline: TaskReasoning[] = [];
   let mostRecentText: string | null = null;
 
@@ -106,6 +98,56 @@ export const buildTaskReasoningTimeline = (transcriptPath: string): TaskReasonin
       }
     }
   }
+
+  return timeline;
+};
+
+/**
+ * Reads a single transcript and extracts its task-reasoning timeline. This
+ * is a single transcript, not cross-session, so `mostRecentText` is never
+ * reset mid-scan.
+ */
+export const buildTaskReasoningTimeline = (transcriptPath: string): TaskReasoning[] => {
+  let content: string;
+  try {
+    content = fs.readFileSync(transcriptPath, "utf8");
+  } catch {
+    return [];
+  }
+
+  return extractTaskReasoningFromContent(content);
+};
+
+export type SessionTaskReasoning = TaskReasoning & { sessionIndex: number };
+
+/**
+ * Same extraction, across every transcript a project has ever had - the
+ * Decision Map's raw material (PRD §7's "idea -> reality" narrative, but as
+ * a graph rather than prose). Mirrors buildFileTouchTimeline's per-transcript
+ * reset: `mostRecentText` starts fresh at each transcript boundary, since
+ * reasoning from one session shouldn't bleed into the next one's tasks.
+ *
+ * Each entry is tagged with `sessionIndex` (position in `transcriptPaths`,
+ * which callers already hand in chronological order) so a session-grouped
+ * view of the map doesn't need a second pass over the transcripts.
+ */
+export const buildTaskReasoningTimelineForProject = (
+  transcriptPaths: string[]
+): SessionTaskReasoning[] => {
+  const timeline: SessionTaskReasoning[] = [];
+
+  transcriptPaths.forEach((transcriptPath, sessionIndex) => {
+    let content: string;
+    try {
+      content = fs.readFileSync(transcriptPath, "utf8");
+    } catch {
+      return;
+    }
+
+    for (const entry of extractTaskReasoningFromContent(content)) {
+      timeline.push({ ...entry, sessionIndex });
+    }
+  });
 
   return timeline;
 };
@@ -231,7 +273,7 @@ type RawAnnotationResponse = {
   overall: { verdict: string; concerns: string };
 };
 
-const SERVES_INTENT_VALUES: TaskAnnotation["servesIntent"][] = [
+export const SERVES_INTENT_VALUES: TaskAnnotation["servesIntent"][] = [
   "purpose",
   "successCriteria",
   "acceptedTradeoffs",

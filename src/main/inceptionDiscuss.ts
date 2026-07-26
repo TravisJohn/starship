@@ -13,22 +13,23 @@ const asRecord = (value: unknown): JsonRecord | null =>
 const asString = (value: unknown): string | null =>
   typeof value === "string" ? value : null;
 
-export const registerIntentDiscussHandlers = (db: StarshipDb): void => {
+export const registerInceptionDiscussHandlers = (db: StarshipDb): void => {
   ipcMain.handle(
-    "intent:discuss",
+    "inception:discuss",
     (_event, request: DiscussFieldRequest): Promise<DiscussFieldResponse> =>
       generateDiscussReply(db, request)
   );
 };
 
 /**
- * One turn of the Discuss chat for a single Intent field. Fully stateless
- * per call, same as every other headless feature - the caller resends the
- * whole conversation history each turn since `claude -p` has no session-
- * resume concept in how this codebase invokes it. Only ever fires on an
- * explicit user "Send" click, never automatically - CLAUDE.md bans running
- * headless calls in a loop, and a multi-turn thread stays inside that rule
- * as long as every turn is its own click.
+ * One turn of the Discuss chat for a single Inception wizard field - used by
+ * both the Intent Ledger step and the Requirements step. Fully stateless per
+ * call, same as every other headless feature - the caller resends the whole
+ * conversation history each turn since `claude -p` has no session-resume
+ * concept in how this codebase invokes it. Only ever fires on an explicit
+ * user "Send" click, never automatically - CLAUDE.md bans running headless
+ * calls in a loop, and a multi-turn thread stays inside that rule as long as
+ * every turn is its own click.
  */
 export const generateDiscussReply = async (
   db: StarshipDb,
@@ -41,7 +42,8 @@ export const generateDiscussReply = async (
           fieldLabel: request.fieldLabel,
           currentValue: request.currentValue,
           history: request.history,
-          message: request.message
+          message: request.message,
+          intentContext: request.intentContext ?? null
         },
         null,
         2
@@ -49,7 +51,7 @@ export const generateDiscussReply = async (
     });
 
     const raw = await runHeadlessClaude(db, {
-      cacheNamespace: "intent-discuss",
+      cacheNamespace: "inception-discuss",
       prompt,
       cwd: getHeadlessCwd()
     });
@@ -95,7 +97,7 @@ const stripCodeFence = (value: string): string => {
 
 const readPromptTemplate = (): string => {
   const promptDir = process.env.STARSHIP_PROMPT_DIR ?? path.join(getAppRoot(), "prompts");
-  const filePath = path.join(promptDir, "intent-discuss.md");
+  const filePath = path.join(promptDir, "inception-discuss.md");
 
   if (!fs.existsSync(filePath)) {
     throw new Error(`Prompt template missing: ${filePath}`);
