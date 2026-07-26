@@ -9,7 +9,7 @@ type DecisionMapViewProps = {
 };
 
 /**
- * Renders the cumulative decision graph as a self-contained HTML page (same
+ * Renders the cumulative Decision Record as a self-contained HTML page (same
  * pattern as FileMapView: generated server-side, shown via iframe srcDoc,
  * downloadable) rather than a live React component - a portable artifact
  * Travis can open outside Starship fits the teaching goal better than an
@@ -75,9 +75,9 @@ export const DecisionMapView = ({
     <section className="flex h-full min-h-0 flex-col bg-zinc-950 text-zinc-100">
       <header className="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-800 px-4 py-3">
         <div className="min-w-0">
-          <h2 className="truncate text-sm font-semibold leading-none">Decision Map</h2>
+          <h2 className="truncate text-sm font-semibold leading-none">Decision Record</h2>
           <p className="mt-1 truncate text-xs text-zinc-500">
-            {result ? `${result.nodeCount} decisions across this project's history` : projectName}
+            {result ? `${result.decisionCount} decisions across this project's history` : projectName}
           </p>
         </div>
         <button
@@ -111,7 +111,7 @@ export const DecisionMapView = ({
 
       {!result && !error ? (
         <LoadingAnimation
-          label="Mapping this project's decisions"
+          label="Building this project's decision record"
           className="min-h-0 flex-1"
           mediaClassName="h-36 w-64 max-w-[64vw]"
         />

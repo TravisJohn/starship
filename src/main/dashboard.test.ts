@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   computeProjectSizeBytes,
   computeSevenDayActivity,
+  extractDatedHeadings,
   findLatestProjectLogEntry,
   getCachedProjectSizeBytes,
   readPrdPhases,
@@ -377,6 +378,31 @@ Approved the plan.
       title: "2026-07-13 - Phase 1 milestone: playable game complete",
       body: "The game actually works now."
     });
+  });
+});
+
+describe("extractDatedHeadings", () => {
+  it("returns every ## YYYY-MM-DD heading in file order, independent of any single-file convention", () => {
+    const content = [
+      "# Log",
+      "",
+      "## 2026-07-10 - PRD approved",
+      "",
+      "Body text.",
+      "",
+      "## 2026-07-13 - File map verified",
+      "",
+      "More body text."
+    ].join("\n");
+
+    expect(extractDatedHeadings(content)).toEqual([
+      { date: "2026-07-10", title: "2026-07-10 - PRD approved", lineIndex: 2 },
+      { date: "2026-07-13", title: "2026-07-13 - File map verified", lineIndex: 6 }
+    ]);
+  });
+
+  it("returns an empty array for a file with no dated headings", () => {
+    expect(extractDatedHeadings("# Log\n\nJust prose, no dated sections.\n")).toEqual([]);
   });
 });
 

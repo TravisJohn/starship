@@ -288,27 +288,79 @@ export type IntentAnnotationResult = {
 };
 
 /**
- * A cumulative, whole-project-history decision graph - every TaskCreate
- * across every session this project has ever had, plus the logical (not
- * just chronological) relationships between them. The graph-shaped sibling
- * of the Timeline's prose narrative and Decisions Export's raw JSONL.
+ * A cumulative, whole-project-history record of genuine decisions - not
+ * task/work-item titles. A decision has a road not taken: `over` names the
+ * rejected alternative, `because` the constraint that settled it. Sourced
+ * from the project's own git-tracked logs (the spine) plus selective JSONL
+ * transcript reading (fills the gap where a decision arose from the builder
+ * asking a direct question mid-session and never reached a log entry).
  */
-export type DecisionMapNode = {
+export type DecisionEvidenceSource = "log" | "transcript";
+
+/**
+ * A pointer a human can actually follow back to where a decision is visible.
+ * `ref` is a log heading fragment ("PROJECT_LOG.md#2026-07-23", or just the
+ * filename when the anchor has no enclosing dated heading, e.g.
+ * DATA_DICTIONARY.md) for `source: "log"`, or a real Claude Code session id
+ * for `source: "transcript"` - never a forced/approximate value either way.
+ * `anchor` is verbatim text from that exact source, code-verified before a
+ * decision is ever shown.
+ */
+export type DecisionEvidenceEntry = {
+  source: DecisionEvidenceSource;
+  ref: string;
+  anchor: string;
+};
+
+export type DecisionServesIntent =
+  | "purpose"
+  | "successCriteria"
+  | "acceptedTradeoffs"
+  | "neverDo";
+
+export type DecisionReversibility = "cheap" | "load-bearing";
+
+export type DecisionRecordEntry = {
   id: string;
-  label: string;
-  servesIntent: TaskAnnotation["servesIntent"];
-  sessionIndex: number;
+  chose: string;
+  over: string;
+  because: string;
+  /** Never empty - a decision with no verifiable evidence is dropped, not shown. */
+  evidence: DecisionEvidenceEntry[];
+  /** null = never guessed (no Intent Ledger, or no clear match) - distinct from "considered and doesn't serve any". */
+  servesIntent: DecisionServesIntent | null;
+  /** null unless the source material itself states reversibility - never inferred. */
+  reversible: DecisionReversibility | null;
+  /** Count of task items this decision subsumes (e.g. one rationale governing 26 loop iterations). >=1. */
+  collapsed: number;
+  /** Id of an earlier DecisionRecordEntry this one explicitly replaces, or null. */
+  supersedes: string | null;
+  /** ISO date used for "most recent first" ordering; null sorts last. */
+  date: string | null;
 };
 
-export type DecisionMapEdge = {
-  from: string;
-  to: string;
-  reason: string;
+/**
+ * What this record was actually built from, stated plainly rather than
+ * implied - a project's logs may not exist, and surviving transcripts may
+ * postdate the project's own first log entry (Claude Code's transcript
+ * retention has changed over time). The artifact must say which layer is
+ * incomplete rather than implying a full account.
+ */
+export type DecisionRecordCoverage = {
+  totalDecisions: number;
+  fromLogs: number;
+  fromTranscript: number;
+  hasProjectLogs: boolean;
+  logsDateRange: { earliest: string; latest: string } | null;
+  transcriptDateRange: { earliest: string; latest: string } | null;
+  transcriptCoveragePartial: boolean;
+  /** Set on a headless-call failure - distinguishes "nothing found" from "couldn't process". */
+  extractionError: string | null;
 };
 
-export type DecisionMapResult = {
-  nodes: DecisionMapNode[];
-  edges: DecisionMapEdge[];
+export type DecisionRecordResult = {
+  decisions: DecisionRecordEntry[];
+  coverage: DecisionRecordCoverage;
   generatedAt: string;
 };
 
@@ -319,8 +371,8 @@ export type DecisionMapGenerateRequest = {
 
 export type DecisionMapGenerateResponse = {
   html: string;
-  nodeCount: number;
-  edgeCount: number;
+  decisionCount: number;
+  coverage: DecisionRecordCoverage;
   generatedAt: string;
 };
 

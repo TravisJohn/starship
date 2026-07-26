@@ -2,22 +2,21 @@ import { app, dialog, ipcMain } from "electron";
 import fs from "node:fs";
 import path from "node:path";
 import type {
+  DecisionEvidenceEntry,
   DecisionMapDownloadRequest,
   DecisionMapDownloadResponse,
-  DecisionMapEdge,
   DecisionMapGenerateRequest,
   DecisionMapGenerateResponse,
-  DecisionMapNode,
-  DecisionMapResult
+  DecisionRecordCoverage,
+  DecisionRecordEntry,
+  DecisionRecordResult,
+  DecisionReversibility,
+  DecisionServesIntent
 } from "../shared/ipc";
-import { findAllTranscriptsForProject } from "./dashboard";
+import { extractDatedHeadings, findAllTranscriptsForProject } from "./dashboard";
 import type { StarshipDb } from "./db";
 import { getHeadlessCwd, runHeadlessClaude } from "./inception/headlessClaude";
-import {
-  buildTaskReasoningTimelineForProject,
-  SERVES_INTENT_VALUES,
-  type SessionTaskReasoning
-} from "./intentAnnotation";
+import { buildTaskReasoningTimelineForProject } from "./intentAnnotation";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -39,8 +38,8 @@ export const registerDecisionMapHandlers = (db: StarshipDb): void => {
 
       return {
         html: renderDecisionMapHtml(result, projectName),
-        nodeCount: result.nodes.length,
-        edgeCount: result.edges.length,
+        decisionCount: result.decisions.length,
+        coverage: result.coverage,
         generatedAt: result.generatedAt
       };
     }
@@ -50,8 +49,8 @@ export const registerDecisionMapHandlers = (db: StarshipDb): void => {
     "decisionMap:download",
     async (_event, request: DecisionMapDownloadRequest): Promise<DecisionMapDownloadResponse> => {
       const result = await dialog.showSaveDialog({
-        title: "Save Decision Map",
-        defaultPath: `${sanitizeFileName(request.projectName)}-decision-map.html`,
+        title: "Save Decision Record",
+        defaultPath: `${sanitizeFileName(request.projectName)}-decision-record.html`,
         filters: [{ name: "HTML", extensions: ["html"] }]
       });
 
@@ -65,37 +64,591 @@ export const registerDecisionMapHandlers = (db: StarshipDb): void => {
   );
 };
 
+const LOG_FILE_NAMES = ["PROJECT_LOG.md", "BACKFILL_LOG.md", "DATA_DICTIONARY.md"];
+
+export type ProjectLogFile = { file: string; content: string };
+
 /**
- * The whole project's decision history as a graph, not a single session's -
- * every TaskCreate across every transcript this project has ever had
- * (buildTaskReasoningTimelineForProject), with a click-triggered, cached
- * headless pass inferring which decisions logically follow from which
- * others (not just chronological order) plus an Intent Ledger alignment
- * tag per decision. Same graceful-degradation posture as File Map/Intent
- * annotation: no transcripts or no captured decisions -> empty graph;
- * headless failure -> nodes with a default "none" tag and no edges, never
- * a thrown error.
+ * The project's own permanent, git-tracked record - the Decision Record's
+ * spine. Tolerant of any subset missing (mirrors readPrdSummary's
+ * try/catch-return pattern): a project with none of these still runs, just
+ * transcript-only, with coverage saying so.
+ */
+export const readProjectLogs = (projectPath: string): ProjectLogFile[] => {
+  const logs: ProjectLogFile[] = [];
+
+  for (const file of LOG_FILE_NAMES) {
+    let content: string;
+    try {
+      content = fs.readFileSync(path.join(projectPath, file), "utf8");
+    } catch {
+      continue;
+    }
+
+    if (content.trim().length > 0) {
+      logs.push({ file, content });
+    }
+  }
+
+  return logs;
+};
+
+export type ReasoningCluster = {
+  reasoning: string;
+  occurrenceCount: number;
+  sessionId: string;
+};
+
+const sessionIdFromTranscriptPath = (transcriptPath: string): string =>
+  path.basename(transcriptPath, ".jsonl");
+
+/**
+ * Groups every TaskCreate-preceding reasoning string (buildTaskReasoningTimelineForProject,
+ * already built for Intent annotation - reused unchanged) by exact text, so N work
+ * items sharing one rationale (e.g. 26 "Player-level backfill: <season>" tasks
+ * governed by one "newest season first" decision) become one candidate with
+ * occurrenceCount: N, rather than N separate task titles. Entries with no
+ * captured reasoning are dropped outright - no reasoning means nothing to
+ * extract a decision from. TaskCreate content itself (the task labels) is
+ * never used as decision content, only as the mechanism for finding and
+ * counting the reasoning that governed it.
+ */
+export const buildReasoningClusters = (
+  transcripts: { path: string }[]
+): ReasoningCluster[] => {
+  const timeline = buildTaskReasoningTimelineForProject(
+    transcripts.map((transcript) => transcript.path)
+  );
+
+  const byReasoning = new Map<string, { occurrenceCount: number; sessionId: string }>();
+
+  for (const entry of timeline) {
+    const reasoning = entry.reasoning?.trim();
+    if (!reasoning) {
+      continue;
+    }
+
+    const existing = byReasoning.get(reasoning);
+    if (existing) {
+      existing.occurrenceCount += 1;
+      continue;
+    }
+
+    const transcript = transcripts[entry.sessionIndex];
+    byReasoning.set(reasoning, {
+      occurrenceCount: 1,
+      sessionId: transcript ? sessionIdFromTranscriptPath(transcript.path) : "unknown"
+    });
+  }
+
+  return Array.from(byReasoning.entries()).map(([reasoning, value]) => ({
+    reasoning,
+    occurrenceCount: value.occurrenceCount,
+    sessionId: value.sessionId
+  }));
+};
+
+export type DecisionExcerpt = {
+  sessionId: string;
+  userQuestion: string | null;
+  assistantText: string;
+};
+
+/**
+ * Phrases decisions tend to announce themselves with - used only to locate
+ * high-signal passages worth handing to the model, never as the extraction
+ * itself. Deliberately a wide net (some of these, like "instead of", are
+ * common enough to over-match): over-collection here is cheap, since every
+ * candidate still has to pass the model's own judgment and this module's
+ * verbatim-evidence check before becoming a decision.
+ */
+const DECISION_LANGUAGE_PATTERNS = [
+  "one real decision to flag",
+  "let me flag one real risk before",
+  "this needs your input",
+  "i'd suggest",
+  "the tradeoff is",
+  "instead of",
+  "rather than"
+];
+
+const containsDecisionLanguage = (text: string): boolean => {
+  const lower = text.toLowerCase();
+  return DECISION_LANGUAGE_PATTERNS.some((pattern) => lower.includes(pattern));
+};
+
+const EXCERPT_WINDOW = 1500;
+
+/**
+ * A window of `text` centered on whichever decision-language phrase matched,
+ * not just the first EXCERPT_WINDOW characters - a match near the end of a
+ * long turn would otherwise be truncated away entirely.
+ */
+const windowAroundMatch = (text: string): string => {
+  if (text.length <= EXCERPT_WINDOW) {
+    return text;
+  }
+
+  const lower = text.toLowerCase();
+  const matchIndexes = DECISION_LANGUAGE_PATTERNS.map((pattern) => lower.indexOf(pattern)).filter(
+    (index) => index !== -1
+  );
+  const center = matchIndexes.length > 0 ? Math.min(...matchIndexes) : 0;
+  const half = Math.floor(EXCERPT_WINDOW / 2);
+  const start = Math.max(0, center - half);
+  return text.slice(start, Math.min(text.length, start + EXCERPT_WINDOW));
+};
+
+/**
+ * The blind spot this rebuild exists to fix: assistant text using
+ * decision-sounding language, independent of whether any TaskCreate is
+ * nearby (the parallel-vs-sequential backfill decision was never a task -
+ * it was a direct answer to "can we explore parallel run?"). A preceding
+ * human-typed question is attached for context when one exists, using a
+ * detection rule confirmed against a real transcript: a "user" record with a
+ * plain-string message and `origin.kind === "human"`. This is deliberately
+ * distinct from the two other same-shape "user" records real transcripts
+ * contain - `tool_result` envelopes (structured content, not a plain string)
+ * and `<task-notification>` background-task messages (plain string, but
+ * `origin.kind: "task-notification"`) - so neither is ever mistaken for a
+ * genuine question the builder typed.
+ */
+export const findDecisionLanguageExcerpts = (
+  transcripts: { path: string }[]
+): DecisionExcerpt[] => {
+  const excerpts: DecisionExcerpt[] = [];
+
+  for (const transcript of transcripts) {
+    let fileContent: string;
+    try {
+      fileContent = fs.readFileSync(transcript.path, "utf8");
+    } catch {
+      continue;
+    }
+
+    const sessionId = sessionIdFromTranscriptPath(transcript.path);
+    let mostRecentHumanQuestion: string | null = null;
+
+    for (const line of fileContent.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        continue;
+      }
+
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(trimmed);
+      } catch {
+        continue;
+      }
+
+      const record = asRecord(parsed);
+      if (!record) {
+        continue;
+      }
+
+      if (record.type === "user") {
+        const message = asRecord(record.message);
+        const messageContent = message?.content;
+        const origin = asRecord(record.origin);
+        if (typeof messageContent === "string" && origin?.kind === "human") {
+          mostRecentHumanQuestion = messageContent.trim();
+        }
+        continue;
+      }
+
+      if (record.type !== "assistant") {
+        continue;
+      }
+
+      const message = asRecord(record.message);
+      const contentBlocks = message?.content;
+      if (!Array.isArray(contentBlocks)) {
+        continue;
+      }
+
+      for (const block of contentBlocks) {
+        const blockRecord = asRecord(block);
+        if (!blockRecord || blockRecord.type !== "text") {
+          continue;
+        }
+
+        const text = asString(blockRecord.text);
+        if (!text || !containsDecisionLanguage(text)) {
+          continue;
+        }
+
+        excerpts.push({
+          sessionId,
+          userQuestion: mostRecentHumanQuestion,
+          assistantText: windowAroundMatch(text.trim())
+        });
+      }
+    }
+  }
+
+  return excerpts;
+};
+
+const normalizeWhitespace = (value: string): string => value.replace(/\s+/g, " ").trim();
+
+const containsVerbatim = (source: string, anchor: string): boolean =>
+  normalizeWhitespace(source).includes(normalizeWhitespace(anchor));
+
+const buildLogRef = (file: string, date: string | null): string => (date ? `${file}#${date}` : file);
+
+/**
+ * The dated heading immediately before where `anchor` appears in `log`, or
+ * null if the log has no dated headings at all (DATA_DICTIONARY.md) or the
+ * anchor sits before the first one. Never guesses a date it can't locate.
+ */
+const dateForLogAnchor = (log: ProjectLogFile, anchor: string): string | null => {
+  const anchorIndex = log.content.indexOf(anchor);
+  if (anchorIndex === -1) {
+    return null;
+  }
+
+  const headings = extractDatedHeadings(log.content);
+  if (headings.length === 0) {
+    return null;
+  }
+
+  const linesBeforeAnchor = log.content.slice(0, anchorIndex).split(/\r?\n/).length - 1;
+  let latestBefore: string | null = null;
+  for (const heading of headings) {
+    if (heading.lineIndex > linesBeforeAnchor) {
+      break;
+    }
+    latestBefore = heading.date;
+  }
+
+  return latestBefore;
+};
+
+type RawEvidence =
+  | { source: "log"; file: string; anchor: string }
+  | { source: "transcript"; sessionId: string; anchor: string };
+
+type RawDecision = {
+  chose: string;
+  over: string;
+  because: string;
+  evidence: RawEvidence[];
+  servesIntent: DecisionServesIntent | null;
+  reversible: DecisionReversibility | null;
+  collapsed: number;
+  supersedesChose: string | null;
+  isRecapOnly: boolean;
+};
+
+const SERVES_INTENT_RECORD_VALUES: DecisionServesIntent[] = [
+  "purpose",
+  "successCriteria",
+  "acceptedTradeoffs",
+  "neverDo"
+];
+
+const REVERSIBILITY_VALUES: DecisionReversibility[] = ["cheap", "load-bearing"];
+
+const parseRawEvidence = (entry: JsonRecord): RawEvidence | null => {
+  const source = asString(entry.source);
+  const anchor = asString(entry.anchor)?.trim();
+  if (!anchor || (source !== "log" && source !== "transcript")) {
+    return null;
+  }
+
+  if (source === "log") {
+    const file = asString(entry.file)?.trim();
+    return file ? { source: "log", file, anchor } : null;
+  }
+
+  const sessionId = asString(entry.sessionId)?.trim();
+  return sessionId ? { source: "transcript", sessionId, anchor } : null;
+};
+
+/**
+ * `over`/`chose`/`because` empty -> null here, which drops the whole raw
+ * decision before it's ever considered - this is rejection rule 1 ("no
+ * stated alternative -> no node") enforced at parse time, not left to the
+ * model's self-policing.
+ */
+const parseRawDecision = (entry: JsonRecord): RawDecision | null => {
+  const chose = asString(entry.chose)?.trim();
+  const over = asString(entry.over)?.trim();
+  const because = asString(entry.because)?.trim();
+  if (!chose || !over || !because) {
+    return null;
+  }
+
+  const evidence = Array.isArray(entry.evidence)
+    ? entry.evidence
+        .map((item) => asRecord(item))
+        .filter((item): item is JsonRecord => item !== null)
+        .map((item) => parseRawEvidence(item))
+        .filter((item): item is RawEvidence => item !== null)
+    : [];
+
+  const servesIntentRaw = asString(entry.servesIntent);
+  const servesIntent = SERVES_INTENT_RECORD_VALUES.includes(
+    servesIntentRaw as DecisionServesIntent
+  )
+    ? (servesIntentRaw as DecisionServesIntent)
+    : null;
+
+  const reversibleRaw = asString(entry.reversible);
+  const reversible = REVERSIBILITY_VALUES.includes(reversibleRaw as DecisionReversibility)
+    ? (reversibleRaw as DecisionReversibility)
+    : null;
+
+  const collapsedRaw = entry.collapsed;
+  const collapsed =
+    typeof collapsedRaw === "number" && Number.isFinite(collapsedRaw)
+      ? Math.max(1, Math.round(collapsedRaw))
+      : 1;
+
+  return {
+    chose,
+    over,
+    because,
+    evidence,
+    servesIntent,
+    reversible,
+    collapsed,
+    supersedesChose: asString(entry.supersedesChose)?.trim() || null,
+    isRecapOnly: entry.isRecapOnly === true
+  };
+};
+
+const extractDecisionResponse = (raw: string): RawDecision[] | null => {
+  const stripped = stripCodeFence(raw.trim());
+  try {
+    const parsed = JSON.parse(stripped) as unknown;
+    const record = asRecord(parsed);
+    if (!record || !Array.isArray(record.decisions)) {
+      return null;
+    }
+
+    return record.decisions
+      .map((entry) => asRecord(entry))
+      .filter((entry): entry is JsonRecord => entry !== null)
+      .map((entry) => parseRawDecision(entry))
+      .filter((entry): entry is RawDecision => entry !== null);
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * The real enforcement of rejection rule 2 ("no evidence anchor -> no
+ * node"): checks the model's claimed anchor against the exact source it says
+ * it came from, not just that some anchor string was present. A decision
+ * with one valid and one invalid evidence entry keeps only the valid one; a
+ * decision with none valid is dropped entirely by the caller.
+ */
+const verifyEvidence = (
+  raw: RawEvidence,
+  logs: ProjectLogFile[],
+  clusters: ReasoningCluster[],
+  excerpts: DecisionExcerpt[]
+): DecisionEvidenceEntry | null => {
+  if (raw.source === "log") {
+    const log = logs.find((entry) => entry.file === raw.file);
+    if (!log || !containsVerbatim(log.content, raw.anchor)) {
+      return null;
+    }
+
+    return { source: "log", ref: buildLogRef(raw.file, dateForLogAnchor(log, raw.anchor)), anchor: raw.anchor };
+  }
+
+  const inCluster = clusters.some(
+    (cluster) => cluster.sessionId === raw.sessionId && containsVerbatim(cluster.reasoning, raw.anchor)
+  );
+  const inExcerpt = excerpts.some(
+    (excerpt) =>
+      excerpt.sessionId === raw.sessionId &&
+      (containsVerbatim(excerpt.assistantText, raw.anchor) ||
+        (excerpt.userQuestion !== null && containsVerbatim(excerpt.userQuestion, raw.anchor)))
+  );
+
+  return inCluster || inExcerpt
+    ? { source: "transcript", ref: raw.sessionId, anchor: raw.anchor }
+    : null;
+};
+
+const REVERSIBILITY_LANGUAGE = /\b(later|can be added|without rework|non-destructive|deferr?ed?)\b/i;
+
+/**
+ * Light sanity net for rule "reversible only when the session states it,
+ * never inferred": rejects the clearest hallucinations (a reversible tag
+ * with no reversibility language anywhere in its own evidence) without
+ * claiming to perfectly verify a semantic judgment.
+ */
+const evidenceStatesReversibility = (evidence: DecisionEvidenceEntry[]): boolean =>
+  evidence.some((entry) => REVERSIBILITY_LANGUAGE.test(entry.anchor));
+
+const isoDateFromMillis = (mtimeMs: number): string => new Date(mtimeMs).toISOString().slice(0, 10);
+
+const resolveDecisionDate = (
+  evidence: DecisionEvidenceEntry[],
+  sessionDates: Map<string, string>
+): string | null => {
+  const dates = evidence
+    .map((entry) =>
+      entry.source === "log" ? entry.ref.split("#")[1] ?? null : sessionDates.get(entry.ref) ?? null
+    )
+    .filter((date): date is string => date !== null);
+
+  return dates.length > 0 ? dates.reduce((earliest, date) => (date < earliest ? date : earliest)) : null;
+};
+
+const sortMostRecentFirst = (decisions: DecisionRecordEntry[]): DecisionRecordEntry[] =>
+  [...decisions].sort((a, b) => {
+    if (a.date === b.date) return 0;
+    if (a.date === null) return 1;
+    if (b.date === null) return -1;
+    return a.date < b.date ? 1 : -1;
+  });
+
+const buildValidatedDecisions = (
+  rawDecisions: RawDecision[],
+  logs: ProjectLogFile[],
+  clusters: ReasoningCluster[],
+  excerpts: DecisionExcerpt[],
+  sessionDates: Map<string, string>,
+  hasLedger: boolean
+): DecisionRecordEntry[] => {
+  type Draft = DecisionRecordEntry & { supersedesChose: string | null };
+  const drafts: Draft[] = [];
+
+  rawDecisions
+    .filter((raw) => !raw.isRecapOnly) // rule 4: a recap belongs to the session it recaps, not this one
+    .forEach((raw, index) => {
+      const evidence = raw.evidence
+        .map((item) => verifyEvidence(item, logs, clusters, excerpts))
+        .filter((item): item is DecisionEvidenceEntry => item !== null);
+
+      if (evidence.length === 0) {
+        return;
+      }
+
+      drafts.push({
+        id: `decision-${index}`,
+        chose: raw.chose,
+        over: raw.over,
+        because: raw.because,
+        evidence,
+        servesIntent: hasLedger ? raw.servesIntent : null,
+        reversible: raw.reversible && evidenceStatesReversibility(evidence) ? raw.reversible : null,
+        collapsed: raw.collapsed,
+        supersedes: null,
+        date: resolveDecisionDate(evidence, sessionDates),
+        supersedesChose: raw.supersedesChose
+      });
+    });
+
+  const idByChose = new Map(drafts.map((draft) => [draft.chose, draft.id]));
+  const resolved = drafts.map((draft) => {
+    const { supersedesChose, ...entry } = draft;
+    const supersedes =
+      supersedesChose && supersedesChose !== draft.chose ? idByChose.get(supersedesChose) ?? null : null;
+    return { ...entry, supersedes };
+  });
+
+  return sortMostRecentFirst(resolved);
+};
+
+const computeCoverage = (
+  decisions: DecisionRecordEntry[],
+  logs: ProjectLogFile[],
+  transcripts: { mtimeMs: number }[]
+): Omit<DecisionRecordCoverage, "extractionError"> => {
+  const fromLogs = decisions.filter((entry) => entry.evidence.some((e) => e.source === "log")).length;
+  const fromTranscript = decisions.filter((entry) =>
+    entry.evidence.some((e) => e.source === "transcript")
+  ).length;
+
+  const headingDates = logs.flatMap((log) => extractDatedHeadings(log.content).map((h) => h.date));
+  const logsDateRange =
+    headingDates.length > 0
+      ? {
+          earliest: headingDates.reduce((a, b) => (a < b ? a : b)),
+          latest: headingDates.reduce((a, b) => (a > b ? a : b))
+        }
+      : null;
+
+  const transcriptDates = transcripts.map((t) => isoDateFromMillis(t.mtimeMs));
+  const transcriptDateRange =
+    transcriptDates.length > 0
+      ? {
+          earliest: transcriptDates.reduce((a, b) => (a < b ? a : b)),
+          latest: transcriptDates.reduce((a, b) => (a > b ? a : b))
+        }
+      : null;
+
+  return {
+    totalDecisions: decisions.length,
+    fromLogs,
+    fromTranscript,
+    hasProjectLogs: logs.length > 0,
+    logsDateRange,
+    transcriptDateRange,
+    transcriptCoveragePartial:
+      logsDateRange !== null &&
+      transcriptDateRange !== null &&
+      transcriptDateRange.earliest > logsDateRange.earliest
+  };
+};
+
+const describeExtractionError = (
+  error: unknown,
+  logCount: number,
+  clusterCount: number,
+  excerptCount: number
+): string =>
+  `${stringifyError(error)} - ${logCount} log file(s), ${clusterCount} reasoning cluster(s), and ${excerptCount} transcript excerpt(s) were found but couldn't be structured into decisions this time.`;
+
+/**
+ * The whole project's decision history, sourced from its own git-tracked
+ * logs (the spine) plus selective transcript reading that fills one named
+ * gap: decisions that arose from a direct question mid-session and never
+ * reached a log entry. One click-triggered, cached headless call per
+ * generation - never a sweep of raw transcript text, never a loop.
  */
 export const generateDecisionMap = async (
   db: StarshipDb,
   request: DecisionMapGenerateRequest
-): Promise<DecisionMapResult> => {
+): Promise<DecisionRecordResult> => {
   const generatedAt = new Date().toISOString();
 
+  const logs = readProjectLogs(request.projectPath);
   const transcripts = findAllTranscriptsForProject(request.projectPath);
-  if (transcripts.length === 0) {
-    return { nodes: [], edges: [], generatedAt };
+  const clusters = transcripts.length > 0 ? buildReasoningClusters(transcripts) : [];
+  const excerpts = transcripts.length > 0 ? findDecisionLanguageExcerpts(transcripts) : [];
+
+  if (logs.length === 0 && clusters.length === 0 && excerpts.length === 0) {
+    return {
+      decisions: [],
+      coverage: {
+        totalDecisions: 0,
+        fromLogs: 0,
+        fromTranscript: 0,
+        hasProjectLogs: false,
+        logsDateRange: null,
+        transcriptDateRange: null,
+        transcriptCoveragePartial: false,
+        extractionError: null
+      },
+      generatedAt
+    };
   }
 
-  const timeline = buildTaskReasoningTimelineForProject(
-    transcripts.map((transcript) => transcript.path)
-  );
-  if (timeline.length === 0) {
-    return { nodes: [], edges: [], generatedAt };
-  }
-
-  const nodes = buildNodes(timeline);
   const ledger = db.getIntentLedger(request.projectId);
+  const sessionDates = new Map(
+    transcripts.map((transcript) => [
+      sessionIdFromTranscriptPath(transcript.path),
+      isoDateFromMillis(transcript.mtimeMs)
+    ])
+  );
 
   try {
     const prompt = fillPromptTemplate(readPromptTemplate(), {
@@ -109,9 +662,16 @@ export const generateDecisionMap = async (
                 neverDo: ledger.neverDo
               }
             : null,
-          decisions: timeline.map((entry) => ({
-            label: entry.label,
-            reasoning: entry.reasoning
+          logs: logs.map((log) => ({ file: log.file, content: log.content })),
+          reasoningClusters: clusters.map((cluster) => ({
+            reasoning: cluster.reasoning,
+            occurrenceCount: cluster.occurrenceCount,
+            sessionId: cluster.sessionId
+          })),
+          excerpts: excerpts.map((excerpt) => ({
+            sessionId: excerpt.sessionId,
+            userQuestion: excerpt.userQuestion,
+            assistantText: excerpt.assistantText
           }))
         },
         null,
@@ -125,116 +685,31 @@ export const generateDecisionMap = async (
       cwd: getHeadlessCwd()
     });
 
-    const parsed = extractDecisionMapResponse(raw);
+    const rawDecisions = extractDecisionResponse(raw) ?? [];
+    const decisions = buildValidatedDecisions(
+      rawDecisions,
+      logs,
+      clusters,
+      excerpts,
+      sessionDates,
+      ledger !== null
+    );
+
     return {
-      nodes: reconcileNodes(nodes, parsed?.nodes ?? []),
-      edges: reconcileEdges(nodes, parsed?.edges ?? []),
+      decisions,
+      coverage: { ...computeCoverage(decisions, logs, transcripts), extractionError: null },
       generatedAt
     };
-  } catch {
-    return { nodes, edges: [], generatedAt };
+  } catch (error) {
+    return {
+      decisions: [],
+      coverage: {
+        ...computeCoverage([], logs, transcripts),
+        extractionError: describeExtractionError(error, logs.length, clusters.length, excerpts.length)
+      },
+      generatedAt
+    };
   }
-};
-
-const buildNodes = (timeline: SessionTaskReasoning[]): DecisionMapNode[] =>
-  timeline.map((entry, index) => ({
-    id: `decision-${index}`,
-    label: entry.label,
-    servesIntent: "none",
-    sessionIndex: entry.sessionIndex
-  }));
-
-type RawNode = { label: string; servesIntent: DecisionMapNode["servesIntent"] };
-type RawEdge = { from: string; to: string; reason: string };
-type RawDecisionMapResponse = { nodes: RawNode[]; edges: RawEdge[] };
-
-const extractDecisionMapResponse = (raw: string): RawDecisionMapResponse | null => {
-  const stripped = stripCodeFence(raw.trim());
-  try {
-    const parsed = JSON.parse(stripped) as unknown;
-    const record = asRecord(parsed);
-    if (!record) {
-      return null;
-    }
-
-    const nodes = Array.isArray(record.nodes)
-      ? record.nodes
-          .map((entry) => asRecord(entry))
-          .filter((entry): entry is JsonRecord => entry !== null)
-          .map((entry) => {
-            const label = asString(entry.label);
-            if (!label) {
-              return null;
-            }
-            const servesIntentRaw = asString(entry.servesIntent);
-            const servesIntent = SERVES_INTENT_VALUES.includes(
-              servesIntentRaw as DecisionMapNode["servesIntent"]
-            )
-              ? (servesIntentRaw as DecisionMapNode["servesIntent"])
-              : "none";
-            return { label, servesIntent };
-          })
-          .filter((entry): entry is RawNode => entry !== null)
-      : [];
-
-    const edges = Array.isArray(record.edges)
-      ? record.edges
-          .map((entry) => asRecord(entry))
-          .filter((entry): entry is JsonRecord => entry !== null)
-          .map((entry) => ({
-            from: asString(entry.from)?.trim() ?? "",
-            to: asString(entry.to)?.trim() ?? "",
-            reason: asString(entry.reason)?.trim() ?? ""
-          }))
-          .filter((entry) => entry.from.length > 0 && entry.to.length > 0 && entry.reason.length > 0)
-      : [];
-
-    return { nodes, edges };
-  } catch {
-    return null;
-  }
-};
-
-/**
- * Maps the LLM's label-keyed servesIntent tags back onto real node ids, by
- * exact label, in order, first-unused-match-wins - same reconciliation
- * convention as intentAnnotation.ts's reconcilePerTask. A node the LLM
- * didn't tag keeps the default "none" rather than being dropped: every
- * captured decision must appear in the map, tagged or not.
- */
-const reconcileNodes = (nodes: DecisionMapNode[], rawNodes: RawNode[]): DecisionMapNode[] => {
-  const remaining = [...rawNodes];
-
-  return nodes.map((node) => {
-    const matchIndex = remaining.findIndex((entry) => entry.label === node.label);
-    if (matchIndex === -1) {
-      return node;
-    }
-
-    const [matched] = remaining.splice(matchIndex, 1);
-    return { ...node, servesIntent: matched.servesIntent };
-  });
-};
-
-/**
- * Maps the LLM's label-keyed edges back onto real node ids, by exact label,
- * first-unused-match-wins per side. An edge referencing a label with no
- * matching node (the LLM citing something it wasn't given) is dropped.
- */
-const reconcileEdges = (nodes: DecisionMapNode[], rawEdges: RawEdge[]): DecisionMapEdge[] => {
-  const edges: DecisionMapEdge[] = [];
-
-  for (const rawEdge of rawEdges) {
-    const from = nodes.find((node) => node.label === rawEdge.from);
-    const to = nodes.find((node) => node.label === rawEdge.to);
-    if (!from || !to) {
-      continue;
-    }
-
-    edges.push({ from: from.id, to: to.id, reason: rawEdge.reason });
-  }
-
-  return edges;
 };
 
 const stripCodeFence = (value: string): string => {
@@ -279,20 +754,51 @@ const sanitizeFileName = (value: string): string => {
   return sanitized.length > 0 ? sanitized : "project";
 };
 
-export const renderDecisionMapHtml = (result: DecisionMapResult, projectName: string): string => {
-  const data = serializeJsonForScript({
-    projectName,
-    generatedAt: result.generatedAt,
-    nodes: result.nodes,
-    edges: result.edges
-  });
+const stringifyError = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
+const formatDateRangeText = (range: { earliest: string; latest: string } | null): string =>
+  range ? `${range.earliest} to ${range.latest}` : "none found";
+
+const renderCoverageMeta = (coverage: DecisionRecordCoverage, generatedAt: string): string => {
+  const plural = coverage.totalDecisions === 1 ? "" : "s";
+  const lines: string[] = [];
+
+  lines.push(
+    `<div><strong>${coverage.totalDecisions}</strong> decision${plural} — ${coverage.fromLogs} from this project's own logs, ${coverage.fromTranscript} from session transcripts. Generated ${escapeHtml(generatedAt)}.</div>`
+  );
+
+  lines.push(
+    coverage.hasProjectLogs
+      ? `<div>Logs cover ${escapeHtml(formatDateRangeText(coverage.logsDateRange))}.</div>`
+      : `<div>No project logs found (PROJECT_LOG.md / BACKFILL_LOG.md / DATA_DICTIONARY.md) — this record is transcript-only.</div>`
+  );
+
+  const partialNote =
+    coverage.transcriptCoveragePartial && coverage.logsDateRange
+      ? ` Older sessions appear to have been cleaned up before ${escapeHtml(coverage.logsDateRange.earliest)} — transcript enrichment before then is likely incomplete.`
+      : "";
+  lines.push(
+    `<div>Session transcripts on disk cover ${escapeHtml(formatDateRangeText(coverage.transcriptDateRange))}.${partialNote}</div>`
+  );
+
+  return lines.join("\n");
+};
+
+const renderErrorBanner = (coverage: DecisionRecordCoverage): string =>
+  coverage.extractionError
+    ? `<div class="error-banner">Extraction failed: ${escapeHtml(coverage.extractionError)}</div>`
+    : "";
+
+export const renderDecisionMapHtml = (result: DecisionRecordResult, projectName: string): string => {
+  const data = serializeJsonForScript({ decisions: result.decisions });
 
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${escapeHtml(projectName)} Decision Map</title>
+  <title>${escapeHtml(projectName)} Decision Record</title>
   <style>
     :root {
       color-scheme: dark;
@@ -303,11 +809,6 @@ export const renderDecisionMapHtml = (result: DecisionMapResult, projectName: st
       --muted: #a1a1aa;
       --soft: #27272a;
       --accent: #38bdf8;
-      --purpose: #38bdf8;
-      --successCriteria: #4ade80;
-      --acceptedTradeoffs: #c084fc;
-      --neverDo: #f59e0b;
-      --none: #52525b;
     }
     * { box-sizing: border-box; }
     body {
@@ -317,27 +818,20 @@ export const renderDecisionMapHtml = (result: DecisionMapResult, projectName: st
       color: var(--text);
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
-    header {
-      padding: 20px 24px 12px;
-      border-bottom: 1px solid var(--soft);
-    }
+    header { padding: 20px 24px 14px; border-bottom: 1px solid var(--soft); }
     h1 { margin: 0; font-size: 18px; font-weight: 700; }
-    .meta { margin-top: 6px; color: var(--muted); font-size: 12px; }
-    .legend {
-      display: flex;
-      gap: 14px;
+    .meta { margin-top: 8px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+    .meta strong { color: var(--text); }
+    .error-banner {
       margin-top: 10px;
-      flex-wrap: wrap;
-      font-size: 11px;
-      color: var(--muted);
+      padding: 8px 12px;
+      border: 1px solid #f59e0b55;
+      background: #f59e0b15;
+      border-radius: 6px;
+      color: #fbbf24;
+      font-size: 12px;
     }
-    .legend span { display: inline-flex; align-items: center; gap: 6px; }
-    .swatch { width: 10px; height: 10px; border-radius: 999px; display: inline-block; }
-    .modes {
-      display: flex;
-      gap: 6px;
-      margin-top: 10px;
-    }
+    .modes { display: flex; gap: 6px; margin-top: 12px; }
     .modes button {
       appearance: none;
       border: 1px solid var(--soft);
@@ -350,70 +844,94 @@ export const renderDecisionMapHtml = (result: DecisionMapResult, projectName: st
       border-radius: 6px;
       cursor: pointer;
     }
-    .modes button.active {
-      border-color: var(--accent);
-      color: var(--text);
-    }
+    .modes button.active { border-color: var(--accent); color: var(--text); }
     .wrap {
       display: grid;
       grid-template-rows: 1fr auto;
-      height: calc(100vh - 140px);
+      height: calc(100vh - 190px);
       min-height: 420px;
     }
-    .stage { overflow: auto; padding: 16px; min-height: 0; display: flex; }
-    .stage.fit { overflow: hidden; }
-    .stage.fit svg { width: 100%; height: 100%; }
+    .stage { overflow: auto; padding: 16px 24px; }
     .empty {
       display: grid;
       height: 100%;
-      width: 100%;
       place-items: center;
       padding: 24px;
       color: var(--muted);
       text-align: center;
       font-size: 13px;
     }
-    svg {
-      display: block;
-      margin: 0 auto;
-      border: 1px solid var(--soft);
-      border-radius: 8px;
-      background: #0f0f12;
-      flex-shrink: 0;
+    .group-label {
+      margin: 18px 0 8px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
     }
-    .edge { stroke: var(--line); stroke-width: 1.5; fill: none; opacity: 0.65; }
-    .lane-label { fill: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
-    .node rect { fill: var(--panel); stroke-width: 2; rx: 6; cursor: pointer; }
-    .node text { fill: var(--text); font-size: 12px; pointer-events: none; }
+    .group-label:first-child { margin-top: 0; }
+    .card {
+      border: 1px solid var(--soft);
+      background: var(--panel);
+      border-radius: 8px;
+      padding: 12px 14px;
+      margin-bottom: 10px;
+      cursor: pointer;
+    }
+    .card:hover { border-color: var(--accent); }
+    .card .chose { font-size: 16px; font-weight: 600; color: var(--text); }
+    .card .over { margin-top: 3px; font-size: 13px; color: var(--muted); }
+    .card .because { margin-top: 6px; font-size: 13px; color: #d4d4d8; line-height: 1.5; }
+    .tags { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+    .tag {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--soft);
+      color: var(--muted);
+    }
+    .tag.intent { border-color: var(--accent); color: var(--accent); }
+    .tag.collapsed { border-color: #52525b; color: #a1a1aa; }
+    .tag.reversible-cheap { border-color: #4ade80; color: #4ade80; }
+    .tag.reversible-load-bearing { border-color: #f59e0b; color: #f59e0b; }
+    .supersedes { margin-top: 6px; font-size: 11px; color: var(--muted); font-style: italic; }
     .detail {
       border-top: 1px solid var(--soft);
       background: #111113;
       padding: 14px 24px;
       min-height: 72px;
+      max-height: 220px;
+      overflow: auto;
       color: var(--muted);
       font-size: 13px;
-      line-height: 1.45;
+      line-height: 1.5;
     }
     .detail strong { color: var(--text); }
-    .detail ul { margin: 6px 0 0; padding-left: 18px; }
+    .detail .evidence-item {
+      margin-top: 8px;
+      padding: 8px 10px;
+      background: #0f0f12;
+      border: 1px solid var(--soft);
+      border-radius: 6px;
+    }
+    .detail .evidence-ref { font-size: 11px; color: var(--accent); margin-bottom: 4px; }
+    .detail .evidence-anchor { font-size: 12px; color: #d4d4d8; white-space: pre-wrap; }
   </style>
 </head>
 <body>
   <header>
-    <h1>${escapeHtml(projectName)} Decision Map</h1>
-    <div class="meta">${result.nodes.length} decisions, ${result.edges.length} connections, generated ${escapeHtml(result.generatedAt)}</div>
-    <div class="legend">
-      <span><span class="swatch" style="background:var(--purpose)"></span>Purpose</span>
-      <span><span class="swatch" style="background:var(--successCriteria)"></span>Success Criteria</span>
-      <span><span class="swatch" style="background:var(--acceptedTradeoffs)"></span>Accepted Tradeoff</span>
-      <span><span class="swatch" style="background:var(--neverDo)"></span>Never Do</span>
-      <span><span class="swatch" style="background:var(--none)"></span>Unattributed</span>
+    <h1>${escapeHtml(projectName)} Decision Record</h1>
+    <div class="meta">
+      ${renderCoverageMeta(result.coverage, result.generatedAt)}
     </div>
+    ${renderErrorBanner(result.coverage)}
     <div class="modes" id="modes">
-      <button type="button" data-mode="tree">Tree</button>
+      <button type="button" data-mode="recent" class="active">Recent</button>
       <button type="button" data-mode="sessions">Sessions</button>
       <button type="button" data-mode="intent">Intent Lanes</button>
-      <button type="button" id="fit-toggle" style="margin-left:12px">Fit to Screen</button>
     </div>
   </header>
   <div class="wrap">
@@ -433,221 +951,92 @@ export const renderDecisionMapHtml = (result: DecisionMapResult, projectName: st
       "'": "&#39;"
     })[char]);
 
-    const NODE_W = 240;
-    const NODE_H = 40;
-    const MARGIN_X = 24;
-    const MARGIN_Y = 24;
-    const INTENT_DIMENSIONS = ["purpose", "successCriteria", "acceptedTradeoffs", "neverDo", "none"];
     const INTENT_LABELS = {
       purpose: "Purpose",
       successCriteria: "Success Criteria",
       acceptedTradeoffs: "Accepted Tradeoff",
-      neverDo: "Never Do",
-      none: "Unattributed"
+      neverDo: "Never Do"
     };
 
-    // Only edges consistent with the original chronological order the
-    // decisions arrived in (main process never reorders them) count as
-    // "earlier -> later" for the tree layout - guards against a
-    // hallucinated backward/self edge ever causing infinite recursion.
-    const indexById = new Map(data.nodes.map((node, i) => [node.id, i]));
-    const forwardEdges = data.edges.filter((edge) => {
-      const fromIndex = indexById.get(edge.from);
-      const toIndex = indexById.get(edge.to);
-      return fromIndex !== undefined && toIndex !== undefined && fromIndex < toIndex;
-    });
+    const byId = new Map(data.decisions.map((d) => [d.id, d]));
+    let currentMode = "recent";
 
-    /**
-     * Nodes positioned by actual dependency depth, not forced into one
-     * column: a decision with two follow-ups visibly branches, decisions
-     * that converge visibly merge. Depth = longest path from any root
-     * (a node with no captured parent).
-     */
-    function computeTreeLayout() {
-      const parentsOf = new Map(data.nodes.map((n) => [n.id, []]));
-      forwardEdges.forEach((edge) => parentsOf.get(edge.to).push(edge.from));
-
-      const depthOf = new Map();
-      const depthFor = (id) => {
-        if (depthOf.has(id)) return depthOf.get(id);
-        depthOf.set(id, 0); // cycle guard: assume 0 while resolving, corrected below if wrong
-        const parents = parentsOf.get(id) || [];
-        const depth = parents.length === 0 ? 0 : 1 + Math.max(...parents.map(depthFor));
-        depthOf.set(id, depth);
-        return depth;
-      };
-      data.nodes.forEach((n) => depthFor(n.id));
-
-      const levels = [];
-      data.nodes.forEach((n) => {
-        const d = depthOf.get(n.id);
-        (levels[d] = levels[d] || []).push(n);
-      });
-
-      const colWidth = NODE_W + 40;
-      const rowHeight = NODE_H + 60;
-      const maxRowCount = Math.max(1, ...levels.map((l) => l.length));
-      const positions = new Map();
-      // Every level shares one coordinate origin (x=0 = left edge of the
-      // widest level) rather than each being centered on its own - a
-      // narrower level is inset relative to the widest one, so the whole
-      // tree reads as centered rather than each row centering independently.
-      levels.forEach((nodesAtLevel, level) => {
-        const rowInset = ((maxRowCount - nodesAtLevel.length) * colWidth) / 2;
-        nodesAtLevel.forEach((node, i) => {
-          positions.set(node.id, {
-            x: rowInset + i * colWidth + colWidth / 2,
-            y: level * rowHeight
-          });
-        });
-      });
-
-      return {
-        positions,
-        contentWidth: maxRowCount * colWidth,
-        contentHeight: levels.length * rowHeight - (rowHeight - NODE_H),
-        edgeShape: "vertical",
-        lanes: null
-      };
-    }
-
-    /** One horizontal lane per session, time flowing left to right. */
-    function computeLaneLayout(laneKeyOf, laneOrder, laneLabelOf) {
-      const laneHeight = NODE_H + 40;
-      const colWidth = NODE_W + 30;
-      const positions = new Map();
-      data.nodes.forEach((node, i) => {
-        const laneIndex = laneOrder.indexOf(laneKeyOf(node));
-        positions.set(node.id, { x: i * colWidth + colWidth / 2, y: laneIndex * laneHeight });
-      });
-
-      return {
-        positions,
-        contentWidth: Math.max(1, data.nodes.length) * colWidth,
-        contentHeight: laneOrder.length * laneHeight,
-        edgeShape: "horizontal",
-        lanes: laneOrder.map((key, i) => ({ label: laneLabelOf(key), y: i * laneHeight }))
-      };
-    }
-
-    function computeSessionsLayout() {
-      const sessions = Array.from(new Set(data.nodes.map((n) => n.sessionIndex))).sort((a, b) => a - b);
-      return computeLaneLayout(
-        (node) => node.sessionIndex,
-        sessions,
-        (key) => "Session " + (key + 1)
-      );
-    }
-
-    function computeIntentLayout() {
-      return computeLaneLayout(
-        (node) => node.servesIntent || "none",
-        INTENT_DIMENSIONS,
-        (key) => INTENT_LABELS[key]
-      );
-    }
-
-    const LAYOUTS = { tree: computeTreeLayout, sessions: computeSessionsLayout, intent: computeIntentLayout };
-    let currentMode = "tree";
-    let fitToScreen = false;
-
-    function edgePath(edgeShape, x0, y0, x1, y1) {
-      if (edgeShape === "vertical") {
-        const midY = y0 + (y1 - y0) / 2;
-        return "M " + x0 + " " + y0 + " C " + x0 + " " + midY + ", " + x1 + " " + midY + ", " + x1 + " " + y1;
+    function cardHtml(decision) {
+      const tags = [];
+      if (decision.servesIntent) {
+        tags.push('<span class="tag intent">' + esc(INTENT_LABELS[decision.servesIntent] || decision.servesIntent) + '</span>');
       }
-      const midX = x0 + (x1 - x0) / 2;
-      return "M " + x0 + " " + y0 + " C " + midX + " " + y0 + ", " + midX + " " + y1 + ", " + x1 + " " + y1;
+      if (decision.reversible) {
+        tags.push('<span class="tag reversible-' + decision.reversible + '">' + esc(decision.reversible) + '</span>');
+      }
+      if (decision.collapsed > 1) {
+        tags.push('<span class="tag collapsed">\\u00d7' + decision.collapsed + '</span>');
+      }
+
+      const supersedesTarget = decision.supersedes ? byId.get(decision.supersedes) : null;
+      const supersedesLine = supersedesTarget
+        ? '<div class="supersedes">Supersedes: ' + esc(supersedesTarget.chose) + '</div>'
+        : '';
+
+      return '<div class="card" data-id="' + esc(decision.id) + '">' +
+        '<div class="chose">' + esc(decision.chose) + '</div>' +
+        '<div class="over">instead of ' + esc(decision.over) + '</div>' +
+        '<div class="because">' + esc(decision.because) + '</div>' +
+        (tags.length ? '<div class="tags">' + tags.join("") + '</div>' : '') +
+        supersedesLine +
+        '</div>';
+    }
+
+    function groupLabelHtml(label) {
+      return '<div class="group-label">' + esc(label) + '</div>';
     }
 
     function render() {
       Array.from(modesEl.children).forEach((btn) => btn.classList.toggle("active", btn.dataset.mode === currentMode));
 
-      if (data.nodes.length === 0) {
-        stage.innerHTML = '<div class="empty">No decisions captured yet - this fills in as sessions run.</div>';
+      if (data.decisions.length === 0) {
+        stage.innerHTML = '<div class="empty">No decisions captured yet - this fills in as sessions run and the project\\'s logs grow.</div>';
         return;
       }
 
-      const layout = LAYOUTS[currentMode]();
-      const laneLabelWidth = layout.lanes ? 120 : 0;
-      const contentWidth = layout.contentWidth + laneLabelWidth;
-      const naturalWidth = contentWidth + MARGIN_X * 2;
-      const naturalHeight = layout.contentHeight + MARGIN_Y * 2 + NODE_H;
-
-      // Fit to Screen: the svg's viewBox stays at the graph's natural size,
-      // but CSS (.stage.fit svg { width/height: 100% }) stretches/shrinks it
-      // to exactly fill the stage, so the browser's own default
-      // preserveAspectRatio scaling shows the whole graph with no scroll -
-      // simpler and more robust than computing a manual scale factor.
-      stage.classList.toggle("fit", fitToScreen);
-      const availableWidth = fitToScreen ? naturalWidth : Math.max(560, stage.clientWidth - 32);
-      const availableHeight = fitToScreen ? naturalHeight : Math.max(320, stage.clientHeight - 32);
-      const width = Math.max(availableWidth, naturalWidth);
-      const height = Math.max(availableHeight, naturalHeight);
-      // True centering (this is what was missing before): content sits in
-      // the middle of the stage when it's narrower/shorter than the
-      // viewport, instead of pinned to a fixed left/top margin.
-      const offsetX = MARGIN_X + laneLabelWidth + Math.max(0, (width - MARGIN_X * 2 - contentWidth) / 2);
-      const offsetY = MARGIN_Y + Math.max(0, (height - MARGIN_Y * 2 - layout.contentHeight) / 2) + NODE_H / 2;
-
-      const cx = (id) => offsetX + layout.positions.get(id).x;
-      const cy = (id) => offsetY + layout.positions.get(id).y;
-
-      const laneMarkup = layout.lanes
-        ? layout.lanes.map((lane) =>
-            '<text class="lane-label" x="' + (offsetX - laneLabelWidth + 8) + '" y="' + (offsetY + lane.y + 4) + '">' + esc(lane.label) + '</text>'
-          ).join("")
-        : "";
-
-      const edgeMarkup = data.edges
-        .map((edge) => {
-          if (!layout.positions.has(edge.from) || !layout.positions.has(edge.to)) return "";
-          const x0 = cx(edge.from) + (layout.edgeShape === "horizontal" ? NODE_W / 2 : 0);
-          const y0 = cy(edge.from) + (layout.edgeShape === "vertical" ? NODE_H / 2 : 0);
-          const x1 = cx(edge.to) + (layout.edgeShape === "horizontal" ? -NODE_W / 2 : 0);
-          const y1 = cy(edge.to) + (layout.edgeShape === "vertical" ? -NODE_H / 2 : 0);
-          return '<path class="edge" data-reason="' + esc(edge.reason) + '" d="' + edgePath(layout.edgeShape, x0, y0, x1, y1) + '"></path>';
+      let html = "";
+      if (currentMode === "recent") {
+        html = data.decisions.map(cardHtml).join("");
+      } else if (currentMode === "sessions") {
+        const order = [];
+        const bySession = new Map();
+        data.decisions.forEach((d) => {
+          const transcriptEvidence = d.evidence.find((e) => e.source === "transcript");
+          const key = transcriptEvidence ? transcriptEvidence.ref : "Logged, no session";
+          if (!bySession.has(key)) {
+            bySession.set(key, []);
+            order.push(key);
+          }
+          bySession.get(key).push(d);
+        });
+        html = order.map((key) => groupLabelHtml(key) + bySession.get(key).map(cardHtml).join("")).join("");
+      } else if (currentMode === "intent") {
+        const order = ["purpose", "successCriteria", "acceptedTradeoffs", "neverDo", null];
+        html = order.map((key) => {
+          const items = data.decisions.filter((d) => d.servesIntent === key);
+          if (items.length === 0) return "";
+          return groupLabelHtml(key ? INTENT_LABELS[key] : "Unattributed") + items.map(cardHtml).join("");
         }).join("");
+      }
 
-      const nodeMarkup = data.nodes.map((node) => {
-        const x = cx(node.id) - NODE_W / 2;
-        const y = cy(node.id) - NODE_H / 2;
-        const color = "var(--" + (node.servesIntent || "none") + ")";
-        return '<g class="node" data-id="' + esc(node.id) + '" transform="translate(' + x + ' ' + y + ')">' +
-          '<rect width="' + NODE_W + '" height="' + NODE_H + '" style="stroke:' + color + '"></rect>' +
-          '<title>' + esc(node.label) + '</title>' +
-          '<text x="12" y="' + Math.round(NODE_H / 2 + 4) + '">' + esc(node.label).slice(0, 34) + '</text>' +
-          '</g>';
-      }).join("");
+      stage.innerHTML = html;
 
-      stage.innerHTML = '<svg width="' + width + '" height="' + height + '" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-label="Decision map">' + laneMarkup + edgeMarkup + nodeMarkup + '</svg>';
-
-      stage.querySelectorAll(".node").forEach((el) => {
+      stage.querySelectorAll(".card").forEach((el) => {
         el.addEventListener("click", () => {
-          stage.querySelectorAll(".node rect").forEach((rect) => rect.style.strokeWidth = 2);
-          const id = el.getAttribute("data-id");
-          const node = data.nodes.find((n) => n.id === id);
-          if (!node) return;
-          el.querySelector("rect").style.strokeWidth = 3;
+          const decision = byId.get(el.getAttribute("data-id"));
+          if (!decision) return;
 
-          const incoming = data.edges.filter((e) => e.to === id);
-          const outgoing = data.edges.filter((e) => e.from === id);
-          const labelFor = (nodeId) => {
-            const n = data.nodes.find((candidate) => candidate.id === nodeId);
-            return n ? n.label : nodeId;
-          };
-
-          let html = '<strong>' + esc(node.label) + '</strong>';
-          if (incoming.length > 0) {
-            html += '<ul>' + incoming.map((e) => '<li>Because of "' + esc(labelFor(e.from)) + '": ' + esc(e.reason) + '</li>').join("") + '</ul>';
-          }
-          if (outgoing.length > 0) {
-            html += '<ul>' + outgoing.map((e) => '<li>Led to "' + esc(labelFor(e.to)) + '": ' + esc(e.reason) + '</li>').join("") + '</ul>';
-          }
-          if (incoming.length === 0 && outgoing.length === 0) {
-            html += '<br>No captured connections to other decisions.';
-          }
-          detail.innerHTML = html;
+          let detailHtml = '<strong>' + esc(decision.chose) + '</strong>';
+          decision.evidence.forEach((entry) => {
+            const refLabel = entry.source === "log" ? entry.ref : "session " + entry.ref;
+            detailHtml += '<div class="evidence-item"><div class="evidence-ref">' + esc(refLabel) + '</div><div class="evidence-anchor">' + esc(entry.anchor) + '</div></div>';
+          });
+          detail.innerHTML = detailHtml;
         });
       });
     }
@@ -657,19 +1046,6 @@ export const renderDecisionMapHtml = (result: DecisionMapResult, projectName: st
       if (!button) return;
       currentMode = button.dataset.mode;
       render();
-    });
-
-    const fitToggle = document.getElementById("fit-toggle");
-    fitToggle.addEventListener("click", () => {
-      fitToScreen = !fitToScreen;
-      fitToggle.classList.toggle("active", fitToScreen);
-      render();
-    });
-
-    let resizeTimer = 0;
-    window.addEventListener("resize", () => {
-      window.clearTimeout(resizeTimer);
-      resizeTimer = window.setTimeout(render, 100);
     });
 
     render();

@@ -407,20 +407,16 @@ export const readPrdPhases = (projectPath: string): PrdPhase[] => {
   return phases;
 };
 
-export const findLatestProjectLogEntry = (
-  projectPath: string
-): ProjectLogEntry | null => {
-  let content: string;
-  try {
-    content = fs.readFileSync(path.join(projectPath, "PROJECT_LOG.md"), "utf8");
-  } catch {
-    return null;
-  }
-
-  if (content.trim().length === 0) {
-    return null;
-  }
-
+/**
+ * Every `## YYYY-MM-DD ...` heading in a project-log-style markdown file, in
+ * file order. Shared by `findLatestProjectLogEntry` (this file) and the
+ * Decision Record's log-evidence dating (decisionMap.ts) - both need the same
+ * heading scan, just for different purposes (latest entry vs. every anchor's
+ * enclosing date).
+ */
+export const extractDatedHeadings = (
+  content: string
+): { date: string; title: string; lineIndex: number }[] => {
   const lines = content.split(/\r?\n/);
   const headings: { date: string; title: string; lineIndex: number }[] = [];
 
@@ -436,6 +432,26 @@ export const findLatestProjectLogEntry = (
       lineIndex
     });
   }
+
+  return headings;
+};
+
+export const findLatestProjectLogEntry = (
+  projectPath: string
+): ProjectLogEntry | null => {
+  let content: string;
+  try {
+    content = fs.readFileSync(path.join(projectPath, "PROJECT_LOG.md"), "utf8");
+  } catch {
+    return null;
+  }
+
+  if (content.trim().length === 0) {
+    return null;
+  }
+
+  const lines = content.split(/\r?\n/);
+  const headings = extractDatedHeadings(content);
 
   if (headings.length === 0) {
     return null;

@@ -535,7 +535,7 @@ export const MissionDashboard = ({
                           onClick={() => openDecisionMap(project)}
                           className="h-8 rounded-md border border-zinc-700 px-3 text-xs font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
                         >
-                          Decision Map
+                          Decision Record
                         </button>
                         <button
                           type="button"

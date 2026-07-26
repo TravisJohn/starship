@@ -6,7 +6,7 @@ const PANEL_LABELS: Record<ActiveSessionPanel, string> = {
   fileMap: "File Map",
   intent: "Intent",
   timeline: "Timeline",
-  decisionMap: "Decision Map"
+  decisionMap: "Decision Record"
 };
 
 /**
