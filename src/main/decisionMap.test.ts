@@ -548,6 +548,52 @@ describe("generateDecisionMap", () => {
     expect(result.decisions.map((d) => d.chose).sort()).toEqual(["N", "P", "X"]);
   });
 
+  it("routes a singular-reply excerpt to its own call, separate from a repeated-reply excerpt sharing another question", async () => {
+    // Session A: one question, one matching reply - a singular, decisive
+    // answer, like the real flagship parallel-vs-sequential decision.
+    // Session B: one question, two separately-matched text blocks in the
+    // same reply - the noisier, repeated-reply case.
+    writeLines(
+      transcriptPath,
+      humanUserTurn("can we explore parallel run right?"),
+      assistantText("Parallel backfills are a bad idea because of the lock risk.")
+    );
+    const transcriptPathB = path.join(tempDir, "sessionB.jsonl");
+    writeLines(
+      transcriptPathB,
+      humanUserTurn("any status?"),
+      assistantText("One real decision to flag: still deciding on the schema."),
+      assistantText("Separately, rather than retry now, let's cooldown first.")
+    );
+    vi.mocked(findAllTranscriptsForProject).mockReturnValue([
+      { path: transcriptPath, mtimeMs: 1 },
+      { path: transcriptPathB, mtimeMs: 2 }
+    ]);
+
+    const seenPayloads: unknown[] = [];
+    vi.mocked(runHeadlessClaude).mockImplementation(async (_db, request) => {
+      if (isMergeRequest(request.prompt)) {
+        return JSON.stringify({ decisions: [] });
+      }
+      seenPayloads.push(JSON.parse(request.prompt));
+      return JSON.stringify({ decisions: [] });
+    });
+
+    const db = makeDb(ledger);
+    await generateDecisionMap(db, { projectId: "proj-1", projectPath: tempDir });
+
+    const transcriptCalls = seenPayloads.filter(
+      (p): p is { excerpts: { assistantText: string }[] } =>
+        Array.isArray((p as { excerpts?: unknown }).excerpts)
+    );
+    expect(transcriptCalls).toHaveLength(2);
+
+    const singularCall = transcriptCalls.find((p) => p.excerpts.length === 1);
+    const repeatedCall = transcriptCalls.find((p) => p.excerpts.length === 2);
+    expect(singularCall?.excerpts[0].assistantText).toContain("bad idea");
+    expect(repeatedCall?.excerpts.map((e) => e.assistantText).join(" ")).toContain("cooldown");
+  });
+
   it("merges two candidates describing the same choice from different slices into one decision, unioning their evidence", async () => {
     fs.writeFileSync(
       path.join(tempDir, "BACKFILL_LOG.md"),

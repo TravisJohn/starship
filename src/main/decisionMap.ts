@@ -906,13 +906,58 @@ type DecisionCandidateSlice = {
 };
 
 /**
- * One slice per log file, plus one slice for all transcript-derived material
- * (clusters + excerpts) - the fanned-out alternative to handing everything
- * to one call. Each log file is small enough alone (NoFlightZone's largest,
- * PROJECT_LOG.md, is ~47KB) that boundForPrompt's log-truncation branch
- * should never trigger per-slice, unlike the combined 250K-budget approach.
- * The transcript slice still goes through boundForPrompt in case a project
- * has an unusually large number of excerpts.
+ * Splits excerpts by (sessionId, userQuestion) group size. A group of one is
+ * a singular, decisive reply - the assistant answered that specific question
+ * once, and the whole reply matched decision language. A group of two or
+ * more means the same tracked question produced several separately-matched
+ * text blocks, usually because a long response (often narrating routine,
+ * multi-step follow-up work) had several incidental phrase matches spread
+ * through it. Checked against real data before building this: every excerpt
+ * in NoFlightZone's real transcripts has *some* userQuestion attached (a
+ * real session always starts with a human turn), so splitting on
+ * presence/absence of a question - the literal originally-proposed signal -
+ * would not have reduced dilution at all (100% would land in one bucket).
+ * Group size does: on the same data, singular replies were 24 of 63
+ * excerpts, and the flagship parallel-vs-sequential decision - a genuinely
+ * singular, decisive reply - landed in that smaller group.
+ */
+const splitExcerptsBySingularReply = (
+  excerpts: DecisionExcerpt[]
+): { singular: DecisionExcerpt[]; repeated: DecisionExcerpt[] } => {
+  const groups = new Map<string, DecisionExcerpt[]>();
+  for (const excerpt of excerpts) {
+    const key = `${excerpt.sessionId} ${excerpt.userQuestion ?? ""}`;
+    const group = groups.get(key);
+    if (group) {
+      group.push(excerpt);
+    } else {
+      groups.set(key, [excerpt]);
+    }
+  }
+
+  const singular: DecisionExcerpt[] = [];
+  const repeated: DecisionExcerpt[] = [];
+  for (const group of groups.values()) {
+    (group.length === 1 ? singular : repeated).push(...group);
+  }
+
+  return { singular, repeated };
+};
+
+/**
+ * One slice per log file, plus two slices for transcript-derived material -
+ * the fanned-out alternative to handing everything to one call. Each log
+ * file is small enough alone (NoFlightZone's largest, PROJECT_LOG.md, is
+ * ~47KB) that boundForPrompt's log-truncation branch should never trigger
+ * per-slice, unlike the combined 250K-budget approach.
+ *
+ * Transcript material is split further: singular-reply excerpts (the
+ * decisive, direct-answer category the blind-spot detector exists for) get
+ * their own dedicated call, isolated from the larger, noisier pool of
+ * repeated-reply excerpts and reasoning clusters. A real comparison found
+ * the flagship parallel-vs-sequential decision missing in 2 of 3 runs
+ * despite its excerpt reliably reaching an undiluted, unclipped payload -
+ * this narrows what else that call has to compete with for attention.
  */
 const buildCandidateSlices = (
   logs: ProjectLogFile[],
@@ -926,9 +971,16 @@ const buildCandidateSlices = (
     excerpts: []
   }));
 
-  if (clusters.length > 0 || excerpts.length > 0) {
-    const bounded = boundForPrompt([], clusters, excerpts);
-    slices.push({ label: "transcript", logs: [], clusters: bounded.clusters, excerpts: bounded.excerpts });
+  const { singular, repeated } = splitExcerptsBySingularReply(excerpts);
+
+  if (singular.length > 0) {
+    const bounded = boundForPrompt([], [], singular);
+    slices.push({ label: "transcript:direct-answers", logs: [], clusters: [], excerpts: bounded.excerpts });
+  }
+
+  if (clusters.length > 0 || repeated.length > 0) {
+    const bounded = boundForPrompt([], clusters, repeated);
+    slices.push({ label: "transcript:other", logs: [], clusters: bounded.clusters, excerpts: bounded.excerpts });
   }
 
   return slices;

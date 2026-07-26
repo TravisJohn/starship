@@ -17,6 +17,12 @@ Merge two candidates only when their `chose` and `over` clearly describe the sam
 - `supersedesChose`: keep if the group agrees on it, and refer to the target by its `chose` text as it appears in YOUR output (not any pre-merge candidate's wording, which may have changed during merging).
 - A candidate with no duplicate in this batch passes through unchanged.
 
+## Reconciling supersedesChose across the whole batch - not just within a merged group
+
+This matters even when two candidates are genuinely different decisions and stay separate. They were extracted by different slices with no shared vocabulary, so a candidate's `supersedesChose` almost never matches another candidate's `chose` text exactly, character-for-character, even when both are clearly talking about the same prior decision (e.g. one candidate says `supersedesChose: "the exclude-list"` while the actual sibling decision's own `chose` is `"Exclude 003-prefix game IDs from season aggregates"`). Resolution downstream is an exact string match, so an unreconciled reference silently fails and the supersedes relationship is lost even though both decisions correctly survive as separate entries.
+
+Whenever a candidate's `supersedesChose` (or its `over`/`because` text) is clearly describing a decision that appears elsewhere in this same batch - worded differently - rewrite that candidate's `supersedesChose` to the exact `chose` text of that decision as it appears in YOUR output. Do this whether or not the two decisions get merged into each other. Only do this when the candidate already expressed an intent to supersede something; do not invent a new supersession relationship between two decisions that never claimed one.
+
 Never fabricate anything beyond what the given candidates already state. When two candidates might be the same decision but you aren't confident, leave them separate - a duplicate that survives is a cosmetic cost; a wrongly-merged pair loses a real distinction.
 
 Return only a JSON object with this shape: {"decisions":[{"chose":"...","over":"...","because":"...","evidence":[{"source":"log","file":"...","anchor":"..."} | {"source":"transcript","sessionId":"...","anchor":"..."}],"servesIntent":"purpose"|"successCriteria"|"acceptedTradeoffs"|"neverDo"|null,"reversible":"cheap"|"load-bearing"|null,"collapsed":1,"supersedesChose":null,"isRecapOnly":false}]}
