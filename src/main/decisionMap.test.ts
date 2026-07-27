@@ -60,6 +60,7 @@ beforeEach(() => {
   // tests that need to inspect what was actually sent to the model.
   fs.writeFileSync(path.join(tempDir, "decision-map.md"), "{{payload_json}}", "utf8");
   fs.writeFileSync(path.join(tempDir, "decision-map-merge.md"), "{{payload_json}}", "utf8");
+  fs.writeFileSync(path.join(tempDir, "decision-map-supersedes.md"), "{{payload_json}}", "utf8");
   vi.mocked(findAllTranscriptsForProject).mockReset();
   vi.mocked(runHeadlessClaude).mockReset();
 });
@@ -118,11 +119,23 @@ const ledger: IntentLedger = {
   updatedAt: "2026-01-01T00:00:00.000Z"
 };
 
-const makeDb = (savedLedger: IntentLedger | null): StarshipDb =>
-  ({
+/**
+ * Backs decision_record_store with a real in-memory array (not just a vi.fn()
+ * stub) so tests can call generateDecisionMap more than once against the
+ * same db and observe real accumulation across "generations" - the same
+ * relationship the real StarshipDb has with its sqlite table.
+ */
+const makeDb = (savedLedger: IntentLedger | null): StarshipDb => {
+  let store: unknown[] = [];
+  return {
     getIntentLedger: vi.fn(() => savedLedger),
-    getProject: vi.fn(() => null)
-  }) as unknown as StarshipDb;
+    getProject: vi.fn(() => null),
+    getDecisionRecordEntries: vi.fn(() => store),
+    saveDecisionRecordEntries: vi.fn((_projectId: string, entries: unknown[]) => {
+      store = entries;
+    })
+  } as unknown as StarshipDb;
+};
 
 const mockDecisions = (decisions: unknown[]): void => {
   vi.mocked(runHeadlessClaude).mockResolvedValue(JSON.stringify({ decisions }));
@@ -475,6 +488,10 @@ describe("generateDecisionMapSingleCall", () => {
  * payload shape (`logs`/`reasoningClusters`/`excerpts` vs `candidates`). */
 const isMergeRequest = (prompt: string): boolean => "candidates" in JSON.parse(prompt);
 
+/** Distinguishes the dedicated supersedes-pass request by its own payload
+ * shape (`decisions`, present in no other request type). */
+const isSupersedesRequest = (prompt: string): boolean => "decisions" in JSON.parse(prompt);
+
 describe("generateDecisionMap", () => {
   it("fans out into one call per log file plus one transcript call, merges across slices, and validates the merged result", async () => {
     fs.writeFileSync(path.join(tempDir, "PROJECT_LOG.md"), "## 2026-07-20 — A\n\nChose X over Y because Z.\n", "utf8");
@@ -493,6 +510,9 @@ describe("generateDecisionMap", () => {
     ]);
 
     vi.mocked(runHeadlessClaude).mockImplementation(async (_db, request) => {
+      if (isSupersedesRequest(request.prompt)) {
+        return JSON.stringify({ supersedes: [] });
+      }
       const payload = JSON.parse(request.prompt) as { logs?: { file: string }[]; candidates?: unknown[] };
       if (isMergeRequest(request.prompt)) {
         // Three genuinely different decisions - nothing for the merge pass
@@ -544,54 +564,11 @@ describe("generateDecisionMap", () => {
     const db = makeDb(ledger);
     const result = await generateDecisionMap(db, { projectId: "proj-1", projectPath: tempDir });
 
-    expect(runHeadlessClaude).toHaveBeenCalledTimes(4); // 3 slices + 1 merge
+    // 3 extraction slices (2 logs + 1 combined transcript slice, confirming
+    // the singular/repeated split stays reverted) + 1 merge + 1 dedicated
+    // supersedes pass (3 surviving decisions > 1).
+    expect(runHeadlessClaude).toHaveBeenCalledTimes(5);
     expect(result.decisions.map((d) => d.chose).sort()).toEqual(["N", "P", "X"]);
-  });
-
-  it("routes a singular-reply excerpt to its own call, separate from a repeated-reply excerpt sharing another question", async () => {
-    // Session A: one question, one matching reply - a singular, decisive
-    // answer, like the real flagship parallel-vs-sequential decision.
-    // Session B: one question, two separately-matched text blocks in the
-    // same reply - the noisier, repeated-reply case.
-    writeLines(
-      transcriptPath,
-      humanUserTurn("can we explore parallel run right?"),
-      assistantText("Parallel backfills are a bad idea because of the lock risk.")
-    );
-    const transcriptPathB = path.join(tempDir, "sessionB.jsonl");
-    writeLines(
-      transcriptPathB,
-      humanUserTurn("any status?"),
-      assistantText("One real decision to flag: still deciding on the schema."),
-      assistantText("Separately, rather than retry now, let's cooldown first.")
-    );
-    vi.mocked(findAllTranscriptsForProject).mockReturnValue([
-      { path: transcriptPath, mtimeMs: 1 },
-      { path: transcriptPathB, mtimeMs: 2 }
-    ]);
-
-    const seenPayloads: unknown[] = [];
-    vi.mocked(runHeadlessClaude).mockImplementation(async (_db, request) => {
-      if (isMergeRequest(request.prompt)) {
-        return JSON.stringify({ decisions: [] });
-      }
-      seenPayloads.push(JSON.parse(request.prompt));
-      return JSON.stringify({ decisions: [] });
-    });
-
-    const db = makeDb(ledger);
-    await generateDecisionMap(db, { projectId: "proj-1", projectPath: tempDir });
-
-    const transcriptCalls = seenPayloads.filter(
-      (p): p is { excerpts: { assistantText: string }[] } =>
-        Array.isArray((p as { excerpts?: unknown }).excerpts)
-    );
-    expect(transcriptCalls).toHaveLength(2);
-
-    const singularCall = transcriptCalls.find((p) => p.excerpts.length === 1);
-    const repeatedCall = transcriptCalls.find((p) => p.excerpts.length === 2);
-    expect(singularCall?.excerpts[0].assistantText).toContain("bad idea");
-    expect(repeatedCall?.excerpts.map((e) => e.assistantText).join(" ")).toContain("cooldown");
   });
 
   it("merges two candidates describing the same choice from different slices into one decision, unioning their evidence", async () => {
@@ -685,6 +662,9 @@ describe("generateDecisionMap", () => {
     vi.mocked(findAllTranscriptsForProject).mockReturnValue([]);
 
     vi.mocked(runHeadlessClaude).mockImplementation(async (_db, request) => {
+      if (isSupersedesRequest(request.prompt)) {
+        return JSON.stringify({ supersedes: [] });
+      }
       if (isMergeRequest(request.prompt)) {
         return "I'm not confident these are distinguishable, sorry.";
       }

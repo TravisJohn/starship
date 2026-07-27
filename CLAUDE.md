@@ -35,6 +35,16 @@ Personal desktop bridge from idea to running software, keeping strategic intent 
 - `npm run test` — Vitest (parser, status engine, and briefing prompt-assembly must have unit tests)
 - `npm run dist` — electron-builder NSIS installer
 
+## Verification & testing conventions
+
+### Real headless verification runs
+
+Any step that makes a real `claude -p` call against Travis's subscription (not a mocked/unit test) requires a stop-and-confirm before it runs — one step at a time, never a batch.
+
+- State what the next call will do and roughly how long/how much it reads, then wait for a go-ahead before running it.
+- Never chain multiple real verification runs in one turn without a check-in between each one.
+- If a multi-step verification plan is proposed, list the steps first and let Travis choose how many to run now.
+
 ## Never do
 - Surface operational detail as primary UI content (violates altitude discipline)
 - Add telemetry, accounts, cloud services, or auto-update

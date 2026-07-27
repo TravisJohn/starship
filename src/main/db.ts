@@ -153,6 +153,12 @@ export class StarshipDb {
         created_at text not null,
         updated_at text not null
       );
+
+      create table if not exists decision_record_store (
+        project_id text primary key references projects(id) on delete cascade,
+        entries_json text not null,
+        updated_at text not null
+      );
     `);
 
     this.migrateNotesContentColumn();
@@ -619,6 +625,42 @@ export class StarshipDb {
     }
 
     return rowToNote(row);
+  }
+
+  /**
+   * The Decision Record's accumulated, cross-generation entry set - raw
+   * parsed JSON, untyped here deliberately (decisionMap.ts owns the shape
+   * and re-validates tolerantly on read, the same posture the JSONL parser
+   * takes toward its own source: never trust a stored blob blindly). Empty
+   * array when this project has never generated a Decision Record before.
+   */
+  getDecisionRecordEntries(projectId: ProjectId): unknown[] {
+    const row = this.db
+      .prepare("select entries_json from decision_record_store where project_id = ?")
+      .get(projectId) as { entries_json: string } | undefined;
+
+    if (!row) {
+      return [];
+    }
+
+    try {
+      const parsed = JSON.parse(row.entries_json);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  saveDecisionRecordEntries(projectId: ProjectId, entries: unknown[]): void {
+    this.db
+      .prepare(
+        `insert into decision_record_store (project_id, entries_json, updated_at)
+         values (?, ?, ?)
+         on conflict(project_id) do update set
+           entries_json = excluded.entries_json,
+           updated_at = excluded.updated_at`
+      )
+      .run(projectId, JSON.stringify(entries), new Date().toISOString());
   }
 
   close(): void {

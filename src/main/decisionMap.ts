@@ -906,58 +906,23 @@ type DecisionCandidateSlice = {
 };
 
 /**
- * Splits excerpts by (sessionId, userQuestion) group size. A group of one is
- * a singular, decisive reply - the assistant answered that specific question
- * once, and the whole reply matched decision language. A group of two or
- * more means the same tracked question produced several separately-matched
- * text blocks, usually because a long response (often narrating routine,
- * multi-step follow-up work) had several incidental phrase matches spread
- * through it. Checked against real data before building this: every excerpt
- * in NoFlightZone's real transcripts has *some* userQuestion attached (a
- * real session always starts with a human turn), so splitting on
- * presence/absence of a question - the literal originally-proposed signal -
- * would not have reduced dilution at all (100% would land in one bucket).
- * Group size does: on the same data, singular replies were 24 of 63
- * excerpts, and the flagship parallel-vs-sequential decision - a genuinely
- * singular, decisive reply - landed in that smaller group.
- */
-const splitExcerptsBySingularReply = (
-  excerpts: DecisionExcerpt[]
-): { singular: DecisionExcerpt[]; repeated: DecisionExcerpt[] } => {
-  const groups = new Map<string, DecisionExcerpt[]>();
-  for (const excerpt of excerpts) {
-    const key = `${excerpt.sessionId} ${excerpt.userQuestion ?? ""}`;
-    const group = groups.get(key);
-    if (group) {
-      group.push(excerpt);
-    } else {
-      groups.set(key, [excerpt]);
-    }
-  }
-
-  const singular: DecisionExcerpt[] = [];
-  const repeated: DecisionExcerpt[] = [];
-  for (const group of groups.values()) {
-    (group.length === 1 ? singular : repeated).push(...group);
-  }
-
-  return { singular, repeated };
-};
-
-/**
- * One slice per log file, plus two slices for transcript-derived material -
- * the fanned-out alternative to handing everything to one call. Each log
- * file is small enough alone (NoFlightZone's largest, PROJECT_LOG.md, is
- * ~47KB) that boundForPrompt's log-truncation branch should never trigger
- * per-slice, unlike the combined 250K-budget approach.
+ * One slice per log file, plus one slice for all transcript-derived material
+ * (clusters + excerpts) - the fanned-out alternative to handing everything
+ * to one call. Each log file is small enough alone (NoFlightZone's largest,
+ * PROJECT_LOG.md, is ~47KB) that boundForPrompt's log-truncation branch
+ * should never trigger per-slice, unlike the combined 250K-budget approach.
+ * The transcript slice still goes through boundForPrompt in case a project
+ * has an unusually large number of excerpts.
  *
- * Transcript material is split further: singular-reply excerpts (the
- * decisive, direct-answer category the blind-spot detector exists for) get
- * their own dedicated call, isolated from the larger, noisier pool of
- * repeated-reply excerpts and reasoning clusters. A real comparison found
- * the flagship parallel-vs-sequential decision missing in 2 of 3 runs
- * despite its excerpt reliably reaching an undiluted, unclipped payload -
- * this narrows what else that call has to compete with for attention.
+ * A singular-vs-repeated-reply split of the transcript slice was tried and
+ * reverted: on a real comparison it produced a 29/46-decision spread across
+ * otherwise-identical runs (worse than the combined slice it replaced), and
+ * the flagship decision's both-reasons coverage it was meant to fix stayed
+ * at 1/3 - no real improvement to justify the added instability. The
+ * flagship excerpt reaching an undiluted, unclipped payload was never the
+ * problem (confirmed live); a half-written `because` on some runs is the
+ * model's synthesis choice on a complete excerpt, not a retrieval dilution
+ * issue, so splitting the source material further could not have fixed it.
  */
 const buildCandidateSlices = (
   logs: ProjectLogFile[],
@@ -971,16 +936,9 @@ const buildCandidateSlices = (
     excerpts: []
   }));
 
-  const { singular, repeated } = splitExcerptsBySingularReply(excerpts);
-
-  if (singular.length > 0) {
-    const bounded = boundForPrompt([], [], singular);
-    slices.push({ label: "transcript:direct-answers", logs: [], clusters: [], excerpts: bounded.excerpts });
-  }
-
-  if (clusters.length > 0 || repeated.length > 0) {
-    const bounded = boundForPrompt([], clusters, repeated);
-    slices.push({ label: "transcript:other", logs: [], clusters: bounded.clusters, excerpts: bounded.excerpts });
+  if (clusters.length > 0 || excerpts.length > 0) {
+    const bounded = boundForPrompt([], clusters, excerpts);
+    slices.push({ label: "transcript", logs: [], clusters: bounded.clusters, excerpts: bounded.excerpts });
   }
 
   return slices;
@@ -1084,6 +1042,215 @@ const mergeDecisionCandidates = async (
   return merged.length > 0 ? merged : candidates;
 };
 
+type AccumulatedDecision = Omit<DecisionRecordEntry, "id" | "supersedes">;
+
+const evidenceKey = (entry: DecisionEvidenceEntry): string =>
+  `${entry.source} ${entry.ref} ${entry.anchor}`;
+
+/**
+ * Every evidence entry from both sides, deduplicated by (source, ref,
+ * anchor) - the same anchor cited twice across generations is one piece of
+ * evidence, not two. Order preserved: `a`'s own evidence first, then only
+ * the entries from `b` not already present.
+ */
+const unionEvidence = (
+  a: DecisionEvidenceEntry[],
+  b: DecisionEvidenceEntry[]
+): DecisionEvidenceEntry[] => {
+  const seen = new Set(a.map(evidenceKey));
+  const additions = b.filter((entry) => !seen.has(evidenceKey(entry)));
+  return [...a, ...additions];
+};
+
+const decisionKey = (entry: { chose: string; over: string }): string =>
+  `${entry.chose} ${entry.over}`;
+
+/**
+ * The accumulation rule for one matched (chose, over) pair: the entry with
+ * more verified evidence wins as the base (its `because`/tags/date carry
+ * forward, on the theory that more evidence usually means a fuller
+ * generation), ties keep the existing stored entry to avoid needless churn
+ * between regenerations that found the same thing. Either way, the surviving
+ * entry's `evidence` is replaced with the union of both sides - "keep the
+ * better entry" and "never lose an anchor" are separate rules, not one.
+ */
+const mergeAccumulatedEntry = (
+  existing: AccumulatedDecision,
+  incoming: AccumulatedDecision
+): AccumulatedDecision => {
+  const winner = incoming.evidence.length > existing.evidence.length ? incoming : existing;
+  return { ...winner, evidence: unionEvidence(existing.evidence, incoming.evidence) };
+};
+
+/**
+ * Unions one generation's freshly-validated decisions into the project's
+ * accumulated set instead of replacing it - variance across generations
+ * (the same real project, extracted twice, surfacing a different subset of
+ * genuine decisions each time) becomes coverage that only grows, rather than
+ * instability where a decision present in run 1 vanishes in run 2. Matches
+ * purely on (chose, over): two entries describing the same choice but worded
+ * differently won't merge here (that dedup already happened in the
+ * cross-slice merge pass, over the model's own judgment) - accumulation's
+ * job is only to never drop what a past generation already confirmed.
+ * Nothing already stored is ever removed, even when this generation didn't
+ * reproduce it.
+ */
+const accumulateDecisionRecord = (
+  stored: AccumulatedDecision[],
+  incoming: AccumulatedDecision[]
+): AccumulatedDecision[] => {
+  const byKey = new Map(stored.map((entry) => [decisionKey(entry), entry]));
+
+  for (const entry of incoming) {
+    const key = decisionKey(entry);
+    const existing = byKey.get(key);
+    byKey.set(key, existing ? mergeAccumulatedEntry(existing, entry) : entry);
+  }
+
+  return Array.from(byKey.values());
+};
+
+const asEvidenceSource = (value: unknown): DecisionEvidenceEntry["source"] | null =>
+  value === "log" || value === "transcript" ? value : null;
+
+const parseStoredEvidence = (entry: JsonRecord): DecisionEvidenceEntry | null => {
+  const source = asEvidenceSource(entry.source);
+  const ref = asString(entry.ref);
+  const anchor = asString(entry.anchor);
+  return source && ref && anchor ? { source, ref, anchor } : null;
+};
+
+/**
+ * Tolerant read-back of a previously-stored accumulated entry, mirroring
+ * parseRawDecision's posture toward untrusted input - this is our own past
+ * output, but re-validated on read rather than trusted blindly, the same way
+ * the JSONL parser never trusts a stored record just because Starship wrote
+ * it. A malformed stored entry is dropped rather than thrown on, so one bad
+ * row can't break every future generation for the project.
+ */
+const parseStoredDecision = (entry: JsonRecord): AccumulatedDecision | null => {
+  const chose = asString(entry.chose);
+  const over = asString(entry.over);
+  const because = asString(entry.because);
+  if (!chose || !over || !because) {
+    return null;
+  }
+
+  const evidence = Array.isArray(entry.evidence)
+    ? entry.evidence
+        .map((item) => asRecord(item))
+        .filter((item): item is JsonRecord => item !== null)
+        .map((item) => parseStoredEvidence(item))
+        .filter((item): item is DecisionEvidenceEntry => item !== null)
+    : [];
+  if (evidence.length === 0) {
+    return null;
+  }
+
+  const servesIntentRaw = asString(entry.servesIntent);
+  const servesIntent = SERVES_INTENT_RECORD_VALUES.includes(servesIntentRaw as DecisionServesIntent)
+    ? (servesIntentRaw as DecisionServesIntent)
+    : null;
+
+  const reversibleRaw = asString(entry.reversible);
+  const reversible = REVERSIBILITY_VALUES.includes(reversibleRaw as DecisionReversibility)
+    ? (reversibleRaw as DecisionReversibility)
+    : null;
+
+  const collapsedRaw = entry.collapsed;
+  const collapsed =
+    typeof collapsedRaw === "number" && Number.isFinite(collapsedRaw) ? Math.max(1, Math.round(collapsedRaw)) : 1;
+
+  return { chose, over, because, evidence, servesIntent, reversible, collapsed, date: asString(entry.date) };
+};
+
+const loadAccumulatedDecisions = (db: StarshipDb, projectId: string): AccumulatedDecision[] =>
+  db
+    .getDecisionRecordEntries(projectId)
+    .map((entry) => asRecord(entry))
+    .filter((entry): entry is JsonRecord => entry !== null)
+    .map((entry) => parseStoredDecision(entry))
+    .filter((entry): entry is AccumulatedDecision => entry !== null);
+
+const saveAccumulatedDecisions = (db: StarshipDb, projectId: string, entries: AccumulatedDecision[]): void =>
+  db.saveDecisionRecordEntries(projectId, entries);
+
+const SUPERSEDES_PROMPT_FILE = "decision-map-supersedes.md";
+
+type SupersedesLink = { id: string; supersedesId: string };
+
+const buildSupersedesPayload = (decisions: DecisionRecordEntry[]): string =>
+  JSON.stringify(
+    { decisions: decisions.map((d) => ({ id: d.id, chose: d.chose, over: d.over, because: d.because })) },
+    null,
+    2
+  );
+
+const parseSupersedesResponse = (raw: string): SupersedesLink[] | null => {
+  const stripped = stripCodeFence(raw.trim());
+  try {
+    const parsed = JSON.parse(stripped) as unknown;
+    const record = asRecord(parsed);
+    if (!record || !Array.isArray(record.supersedes)) {
+      return null;
+    }
+
+    return record.supersedes
+      .map((entry) => asRecord(entry))
+      .filter((entry): entry is JsonRecord => entry !== null)
+      .map((entry) => ({ id: asString(entry.id), supersedesId: asString(entry.supersedesId) }))
+      .filter((entry): entry is SupersedesLink => entry.id !== null && entry.supersedesId !== null);
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Resolves "which of these decisions replaces which" as its own dedicated
+ * headless pass, run after merge and (in the live pipeline) after
+ * accumulation - over the surviving decision list's own chose/over/because
+ * text only, no evidence, no source files. Same rationale as the fan-out-plus-
+ * merge split for extraction itself: a small, already-structured, single-
+ * purpose call is more reliable than asking for the same judgment as a side
+ * effect of a differently-scoped call. Running it over the full accumulated
+ * set (not just one generation's fresh output) also means a decision that
+ * only surfaced in an earlier generation can still be correctly recognised
+ * as superseded by one that only surfaced in a later one.
+ */
+const resolveSupersedes = async (
+  db: StarshipDb,
+  decisions: DecisionRecordEntry[]
+): Promise<DecisionRecordEntry[]> => {
+  if (decisions.length <= 1) {
+    return decisions;
+  }
+
+  const prompt = fillPromptTemplate(readPromptTemplate(SUPERSEDES_PROMPT_FILE), {
+    payload_json: buildSupersedesPayload(decisions)
+  });
+
+  const raw = await runHeadlessClaude(db, {
+    cacheNamespace: "decision-map:supersedes",
+    prompt,
+    cwd: getHeadlessCwd(),
+    shouldCache: (result) => parseSupersedesResponse(result) !== null
+  });
+
+  const links = parseSupersedesResponse(raw);
+  if (!links || links.length === 0) {
+    return decisions;
+  }
+
+  const byId = new Set(decisions.map((d) => d.id));
+  const supersedesById = new Map(
+    links
+      .filter((link) => link.id !== link.supersedesId && byId.has(link.id) && byId.has(link.supersedesId))
+      .map((link) => [link.id, link.supersedesId])
+  );
+
+  return decisions.map((d) => ({ ...d, supersedes: supersedesById.get(d.id) ?? null }));
+};
+
 /**
  * The whole project's decision history, sourced from its own git-tracked
  * logs (the spine) plus selective transcript reading that fills one named
@@ -1099,6 +1266,12 @@ const mergeDecisionCandidates = async (
  * surfaces from more than one source), before the usual evidence validation
  * runs once against the full project context. See
  * generateDecisionMapSingleCall for the retired single-call approach.
+ *
+ * The validated result of this generation is then unioned into the
+ * project's accumulated record (accumulateDecisionRecord) rather than
+ * replacing it, and supersedes relationships are resolved fresh each time
+ * over that full accumulated set (resolveSupersedes) - both persisted across
+ * calls via the decision_record_store table.
  */
 export const generateDecisionMap = async (
   db: StarshipDb,
@@ -1125,7 +1298,7 @@ export const generateDecisionMap = async (
     const rawCandidates = rawDecisionLists.flat().filter((raw) => !raw.isRecapOnly);
     const mergedCandidates = await mergeDecisionCandidates(db, rawCandidates);
 
-    const decisions = buildValidatedDecisions(
+    const generationDecisions = buildValidatedDecisions(
       mergedCandidates,
       logs,
       clusters,
@@ -1133,6 +1306,19 @@ export const generateDecisionMap = async (
       sessionDates,
       ledger !== null
     );
+
+    const stored = loadAccumulatedDecisions(db, request.projectId);
+    // id/supersedes are per-generation and per-output only, never persisted -
+    // accumulation identity is (chose, over); supersedes is recomputed fresh
+    // below over the accumulated set every time.
+    const incoming = generationDecisions.map(({ id: _id, supersedes: _supersedes, ...rest }) => rest);
+    const accumulated = accumulateDecisionRecord(stored, incoming);
+    saveAccumulatedDecisions(db, request.projectId, accumulated);
+
+    const withIds: DecisionRecordEntry[] = sortMostRecentFirst(
+      accumulated.map((entry, index) => ({ ...entry, id: `decision-${index}`, supersedes: null }))
+    );
+    const decisions = await resolveSupersedes(db, withIds);
 
     return finalizeResult(decisions, logs, transcripts, candidateCounts, generatedAt);
   } catch (error) {
