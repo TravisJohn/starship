@@ -410,3 +410,68 @@ looked broken in the final result (the one retry is noted above, not
 hidden), so no further runs. Open item for whoever looks at this next:
 check 3 wants a generation that actually re-surfaces both dated siblings
 to be a real re-test, not just an absence-of-evidence read.
+
+## 2026-07-28 — Fix #1 re-verified: both dated siblings extracted, correctly kept separate
+
+Committed both Checkpoint B fixes (cross-date merge carve-out in
+`prompts/decision-map-merge.md`; `collapsed` moved out of model output
+into `collapsedFromClusters`) as `1ec90be`. Then re-ran the same real
+`generateDecisionMap` pipeline (rebuilt `dist/main` from current `src/`
+first) against the live NoFlightZone store via
+`.scratch-verify/run-confirmation.js` - one real generation, 772.7s,
+`extractionError: null`. Live store: 27 → 32 decisions.
+
+This is the direct re-test the previous entry's check 3 was left wanting:
+this generation extracted both dated siblings that caused Sonnet's
+wrongful merge in Checkpoint B -
+"Wait for a cooldown period... before retrying" (2026-07-20,
+transcript-sourced) and "Stopped the 2026-07-23 gap cleanup after two
+retry passes" (BACKFILL_LOG.md) - and this time both survive as two
+separate rows. The 07-23 row's own `because` still explicitly cites the
+earlier one ("Per the lesson from 07-20, hammering a connection that had
+already shown same-day degradation...") - the exact precedent-citing
+signal the merge-prompt carve-out targets - and the merge pass correctly
+did not collapse them. **Fix #1 confirmed working against the case that
+motivated it**, not just an absence of the bug in a run that never
+exercised it.
+
+No other anomalies in the new 5 decisions (32 - 27): ordinary new
+extractions from BACKFILL_LOG.md/transcript content (single-date
+immediate-retry exception, row-count-vs-status-label check, overshoot
+cutoff strategy, targeted-retry-over-full-pull choice), nothing
+resembling a merge error.
+
+**Stopping here** - single real-generation re-test per plan, no further
+runs. Model still on Sonnet (reverted last entry); model choice for the
+merge/dedup pass remains undecided.
+
+## 2026-07-28 — Overnight housekeeping: scratch cleanup, carve-out regression test
+
+No real headless calls this entry, deliberately - CLAUDE.md bars leaving
+loops of real `claude -p` calls running unattended, so tonight's queue was
+scoped to non-LLM work only.
+
+**`.scratch-verify/` cleaned up.** Deleted the one-off DB-inspection
+scripts (`check-cache*.js`, `check-ledger.js`, `dump-entries.js`,
+`inspect-db*.js`), the Sonnet/Haiku comparison's raw dumps
+(`pass1-*`/`pass2-*`, `stored-entries.json`, `pass-prompt.txt`), the
+one-off `run-merge-pass.js`, and the latest `confirmation-result.json` -
+all of it either superseded scratch or fully captured already in this
+log's prose. Kept `run-confirmation.js`, the one genuinely reusable
+verification-runner script.
+
+**Added a regression test for fix #1's shape**
+(`decisionMap.test.ts` > "keeps two same-policy, different-date
+candidates as separate decisions when the merge pass says so - doesn't
+re-collapse them in code"). The carve-out itself lives entirely in
+`prompts/decision-map-merge.md` prose, so this can't test the prompt
+- only today's real generation against live NoFlightZone data did that.
+What this test pins instead: given a mocked merge response that already
+(correctly) keeps two dated-precedent candidates separate, no code path
+downstream - validation, evidence-anchor checking - accidentally
+re-merges or drops one of them. Modeled directly on the real
+07-20/07-23 cooldown-vs-gap-cleanup pair from tonight's confirmation run.
+Full suite: 236 tests passing (up from 235), typecheck clean.
+
+**Stopping here for the night.** Nothing further queued; the model
+decision and any next real generation are next-session calls.

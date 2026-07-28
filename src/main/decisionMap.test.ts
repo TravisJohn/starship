@@ -849,6 +849,84 @@ describe("generateDecisionMap", () => {
     expect(second.decisions[0].evidence).toHaveLength(2);
   });
 
+  it("keeps two same-policy, different-date candidates as separate decisions when the merge pass says so - doesn't re-collapse them in code", async () => {
+    // Guards the shape of the fix for the Checkpoint B bug (PROJECT_LOG.md
+    // 2026-07-27 / 2026-07-28): a candidate citing an earlier decision as
+    // dated precedent is its own separate occurrence, not a duplicate of it.
+    // The carve-out that teaches the model to keep them apart lives in
+    // prompts/decision-map-merge.md (prompt-only, verified for real against
+    // live NoFlightZone data on 2026-07-28) - this test can't exercise that
+    // prompt text, but it pins that once the merge pass correctly returns
+    // two rows, no code path downstream (validation, evidence-anchor
+    // checking) accidentally re-merges or drops one of them.
+    writeProjectLog(
+      "## 2026-07-20 — A\n\nWaited for a cooldown period before retrying the failed dates.\n"
+    );
+    fs.writeFileSync(
+      path.join(tempDir, "BACKFILL_LOG.md"),
+      "## 2026-07-23 — B\n\nStopped the gap cleanup after two retry passes, per the lesson from 07-20.\n",
+      "utf8"
+    );
+    vi.mocked(findAllTranscriptsForProject).mockReturnValue([]);
+
+    vi.mocked(runHeadlessClaude).mockImplementation(async (_db, request) => {
+      if (isSupersedesRequest(request.prompt)) {
+        return JSON.stringify({ supersedes: [] });
+      }
+      const payload = JSON.parse(request.prompt) as { logs?: { file: string }[]; candidates?: unknown[] };
+      if (isMergeRequest(request.prompt)) {
+        // Simulates a merge pass that correctly applies the carve-out:
+        // recognizes the second candidate cites the first as precedent for
+        // a separate, later event, and passes both through unmerged.
+        return JSON.stringify({ decisions: payload.candidates });
+      }
+      if (payload.logs?.some((l) => l.file === "PROJECT_LOG.md")) {
+        return JSON.stringify({
+          decisions: [
+            {
+              chose: "Wait for a cooldown period before retrying the failed dates",
+              over: "Immediately re-retrying the same night",
+              because: "Retrying right away was hitting the same degraded connection.",
+              evidence: [
+                {
+                  source: "log",
+                  file: "PROJECT_LOG.md",
+                  anchor: "Waited for a cooldown period before retrying the failed dates."
+                }
+              ]
+            }
+          ]
+        });
+      }
+      return JSON.stringify({
+        decisions: [
+          {
+            chose: "Stopped the gap cleanup after two retry passes",
+            over: "Running a third retry pass immediately",
+            because: "Per the lesson from 07-20, hammering an already-degraded connection makes things worse.",
+            evidence: [
+              {
+                source: "log",
+                file: "BACKFILL_LOG.md",
+                anchor: "Stopped the gap cleanup after two retry passes, per the lesson from 07-20."
+              }
+            ]
+          }
+        ]
+      });
+    });
+
+    const db = makeDb(ledger);
+    const result = await generateDecisionMap(db, { projectId: "proj-1", projectPath: tempDir });
+
+    expect(result.decisions).toHaveLength(2);
+    const chosen = result.decisions.map((d) => d.chose).sort();
+    expect(chosen).toEqual(
+      ["Stopped the gap cleanup after two retry passes", "Wait for a cooldown period before retrying the failed dates"].sort()
+    );
+    expect(result.decisions.find((d) => d.chose.startsWith("Stopped"))?.because).toContain("07-20");
+  });
+
   it("skips the merge call entirely when only one slice produced a candidate - nothing to deduplicate", async () => {
     fs.writeFileSync(path.join(tempDir, "PROJECT_LOG.md"), "## 2026-07-20 — A\n\nChose X over Y because Z.\n", "utf8");
     vi.mocked(findAllTranscriptsForProject).mockReturnValue([]);
