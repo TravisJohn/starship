@@ -336,6 +336,19 @@ type RawEvidence =
   | { source: "log"; file: string; anchor: string }
   | { source: "transcript"; sessionId: string; anchor: string };
 
+/**
+ * No `collapsed` field - unlike `servesIntent`/`reversible`, which are
+ * genuine judgment calls only the source text can settle, `collapsed` is a
+ * plain count (how many repeated work items this decision stands in for)
+ * that's fully derivable from `reasoningClusters.occurrenceCount` in code
+ * (see `collapsedFromClusters`). A real comparison run found neither model
+ * a safe custodian of it even so: asked to combine two candidates' counts
+ * during merge, Sonnet followed the prompt's "never sum" rule correctly,
+ * but Haiku summed on nearly every merge anyway (PROJECT_LOG.md
+ * 2026-07-27, Checkpoint B). Removing it from what either model is asked
+ * to produce at all - neither extraction nor merge - closes that class of
+ * bug outright rather than hoping a stricter prompt fixes it.
+ */
 type RawDecision = {
   chose: string;
   over: string;
@@ -343,7 +356,6 @@ type RawDecision = {
   evidence: RawEvidence[];
   servesIntent: DecisionServesIntent | null;
   reversible: DecisionReversibility | null;
-  collapsed: number;
   supersedesChose: string | null;
   isRecapOnly: boolean;
 };
@@ -423,12 +435,6 @@ const parseRawDecision = (entry: JsonRecord): RawDecision | null => {
     ? (reversibleRaw as DecisionReversibility)
     : null;
 
-  const collapsedRaw = entry.collapsed;
-  const collapsed =
-    typeof collapsedRaw === "number" && Number.isFinite(collapsedRaw)
-      ? Math.max(1, Math.round(collapsedRaw))
-      : 1;
-
   return {
     chose,
     over,
@@ -436,7 +442,6 @@ const parseRawDecision = (entry: JsonRecord): RawDecision | null => {
     evidence,
     servesIntent,
     reversible,
-    collapsed,
     supersedesChose: asString(entry.supersedesChose)?.trim() || null,
     isRecapOnly: entry.isRecapOnly === true
   };
@@ -544,6 +549,33 @@ const sortMostRecentFirst = (decisions: DecisionRecordEntry[]): DecisionRecordEn
     return a.date < b.date ? 1 : -1;
   });
 
+/**
+ * The sole source of truth for `collapsed`: the highest `occurrenceCount`
+ * among any reasoningCluster that one of this decision's own transcript
+ * evidence anchors verbatim-matches (mirrors verifyEvidence's own
+ * cluster-membership check, so a decision's `collapsed` can never disagree
+ * with which cluster its evidence was actually verified against). `1` when
+ * no evidence anchor matches any cluster - a decision sourced entirely from
+ * logs, or from an excerpt rather than a cluster, was never a repeat to
+ * begin with. Computed fresh every time regardless of how many raw
+ * candidates fed into this decision (one extraction, or several merged
+ * across slices/generations) - collapsed measures how many real work items
+ * the underlying decision governed, not how many times extraction happened
+ * to rediscover it, so re-deriving it from clusters here is what keeps a
+ * cross-generation merge from ever inflating it.
+ */
+const collapsedFromClusters = (evidence: RawEvidence[], clusters: ReasoningCluster[]): number => {
+  const matchingCounts = evidence
+    .filter((entry): entry is Extract<RawEvidence, { source: "transcript" }> => entry.source === "transcript")
+    .flatMap((entry) =>
+      clusters
+        .filter((cluster) => cluster.sessionId === entry.sessionId && containsVerbatim(cluster.reasoning, entry.anchor))
+        .map((cluster) => cluster.occurrenceCount)
+    );
+
+  return matchingCounts.length > 0 ? Math.max(...matchingCounts) : 1;
+};
+
 const buildValidatedDecisions = (
   rawDecisions: RawDecision[],
   logs: ProjectLogFile[],
@@ -575,7 +607,7 @@ const buildValidatedDecisions = (
         servesIntent: hasLedger ? raw.servesIntent : null,
         reversible:
           raw.reversible && evidenceStatesReversibility(evidence, raw.reversible) ? raw.reversible : null,
-        collapsed: raw.collapsed,
+        collapsed: collapsedFromClusters(raw.evidence, clusters),
         supersedes: null,
         date: resolveDecisionDate(evidence, sessionDates),
         supersedesChose: raw.supersedesChose
@@ -1044,71 +1076,66 @@ const mergeDecisionCandidates = async (
 
 type AccumulatedDecision = Omit<DecisionRecordEntry, "id" | "supersedes">;
 
-const evidenceKey = (entry: DecisionEvidenceEntry): string =>
-  `${entry.source} ${entry.ref} ${entry.anchor}`;
+/**
+ * Reverses verifyEvidence's (raw -> verified) transformation so a
+ * previously-stored, already-verified entry can be re-offered as a merge
+ * candidate. `ref` is exactly what verifyEvidence produced: `file#date` (or
+ * bare `file`) for a log, the bare sessionId for a transcript - splitting on
+ * the first `#` recovers the file name, and the date itself is dropped since
+ * buildValidatedDecisions recomputes it fresh from the anchor's position in
+ * the current log content.
+ */
+const rawEvidenceFromEntry = (entry: DecisionEvidenceEntry): RawEvidence =>
+  entry.source === "log"
+    ? { source: "log", file: entry.ref.split("#")[0], anchor: entry.anchor }
+    : { source: "transcript", sessionId: entry.ref, anchor: entry.anchor };
 
 /**
- * Every evidence entry from both sides, deduplicated by (source, ref,
- * anchor) - the same anchor cited twice across generations is one piece of
- * evidence, not two. Order preserved: `a`'s own evidence first, then only
- * the entries from `b` not already present.
+ * Re-offers a previously-accumulated, already-verified decision as a fresh
+ * merge candidate - the mechanism that lets accumulation route through the
+ * existing cross-slice merge pass instead of its own exact (chose, over)
+ * string-matching (see accumulateAcrossGenerations). supersedesChose /
+ * isRecapOnly have no stored analogue (supersedes is recomputed fresh every
+ * generation by resolveSupersedes; isRecapOnly-ness was already resolved the
+ * generation this entry first survived validation), so both reset to their
+ * "nothing special" default here. `collapsed` isn't carried forward either -
+ * RawDecision has no such field at all; buildValidatedDecisions recomputes
+ * it fresh from clusters every time (collapsedFromClusters), never from a
+ * prior generation's stored number.
  */
-const unionEvidence = (
-  a: DecisionEvidenceEntry[],
-  b: DecisionEvidenceEntry[]
-): DecisionEvidenceEntry[] => {
-  const seen = new Set(a.map(evidenceKey));
-  const additions = b.filter((entry) => !seen.has(evidenceKey(entry)));
-  return [...a, ...additions];
-};
-
-const decisionKey = (entry: { chose: string; over: string }): string =>
-  `${entry.chose} ${entry.over}`;
-
-/**
- * The accumulation rule for one matched (chose, over) pair: the entry with
- * more verified evidence wins as the base (its `because`/tags/date carry
- * forward, on the theory that more evidence usually means a fuller
- * generation), ties keep the existing stored entry to avoid needless churn
- * between regenerations that found the same thing. Either way, the surviving
- * entry's `evidence` is replaced with the union of both sides - "keep the
- * better entry" and "never lose an anchor" are separate rules, not one.
- */
-const mergeAccumulatedEntry = (
-  existing: AccumulatedDecision,
-  incoming: AccumulatedDecision
-): AccumulatedDecision => {
-  const winner = incoming.evidence.length > existing.evidence.length ? incoming : existing;
-  return { ...winner, evidence: unionEvidence(existing.evidence, incoming.evidence) };
-};
+const accumulatedToRawDecision = (entry: AccumulatedDecision): RawDecision => ({
+  chose: entry.chose,
+  over: entry.over,
+  because: entry.because,
+  evidence: entry.evidence.map(rawEvidenceFromEntry),
+  servesIntent: entry.servesIntent,
+  reversible: entry.reversible,
+  supersedesChose: null,
+  isRecapOnly: false
+});
 
 /**
- * Unions one generation's freshly-validated decisions into the project's
- * accumulated set instead of replacing it - variance across generations
- * (the same real project, extracted twice, surfacing a different subset of
- * genuine decisions each time) becomes coverage that only grows, rather than
- * instability where a decision present in run 1 vanishes in run 2. Matches
- * purely on (chose, over): two entries describing the same choice but worded
- * differently won't merge here (that dedup already happened in the
- * cross-slice merge pass, over the model's own judgment) - accumulation's
- * job is only to never drop what a past generation already confirmed.
- * Nothing already stored is ever removed, even when this generation didn't
- * reproduce it.
+ * Unions one generation's freshly-extracted candidates into the project's
+ * accumulated set by feeding (stored entries, re-offered as candidates) +
+ * (this generation's candidates) through the SAME merge pass slices already
+ * go through - not a second matching mechanism. Replaces an earlier design
+ * that matched purely on exact (chose, over) string equality, which a model
+ * reliably defeats by rewording the same decision between generations
+ * (confirmed live: roughly half of a 50-row accumulated set were reworded
+ * duplicates of an earlier row - see PROJECT_LOG.md 2026-07-27). Routing
+ * through the merge pass's own judgment - the same judgment already trusted
+ * to deduplicate across slices within one generation - means a reworded
+ * repeat now merges instead of forking a new row. The merge output REPLACES
+ * the stored set entirely rather than being unioned key-by-key; nothing
+ * already stored is dropped as a side effect of this, because every stored
+ * entry is itself one of the candidates going in.
  */
-const accumulateDecisionRecord = (
+const accumulateAcrossGenerations = (
+  db: StarshipDb,
   stored: AccumulatedDecision[],
-  incoming: AccumulatedDecision[]
-): AccumulatedDecision[] => {
-  const byKey = new Map(stored.map((entry) => [decisionKey(entry), entry]));
-
-  for (const entry of incoming) {
-    const key = decisionKey(entry);
-    const existing = byKey.get(key);
-    byKey.set(key, existing ? mergeAccumulatedEntry(existing, entry) : entry);
-  }
-
-  return Array.from(byKey.values());
-};
+  incoming: RawDecision[]
+): Promise<RawDecision[]> =>
+  mergeDecisionCandidates(db, [...stored.map(accumulatedToRawDecision), ...incoming]);
 
 const asEvidenceSource = (value: unknown): DecisionEvidenceEntry["source"] | null =>
   value === "log" || value === "transcript" ? value : null;
@@ -1267,11 +1294,14 @@ const resolveSupersedes = async (
  * runs once against the full project context. See
  * generateDecisionMapSingleCall for the retired single-call approach.
  *
- * The validated result of this generation is then unioned into the
- * project's accumulated record (accumulateDecisionRecord) rather than
- * replacing it, and supersedes relationships are resolved fresh each time
- * over that full accumulated set (resolveSupersedes) - both persisted across
- * calls via the decision_record_store table.
+ * This generation's merged candidates are then routed, together with every
+ * previously-stored decision re-offered as a candidate, through that same
+ * merge pass again (accumulateAcrossGenerations) rather than being unioned
+ * by an exact (chose, over) string key - a model reliably reworks phrasing
+ * between generations, and the merge pass's own judgment is what already
+ * catches that within one generation. Supersedes relationships are resolved
+ * fresh each time over the resulting accumulated set (resolveSupersedes) -
+ * both persisted across calls via the decision_record_store table.
  */
 export const generateDecisionMap = async (
   db: StarshipDb,
@@ -1298,8 +1328,15 @@ export const generateDecisionMap = async (
     const rawCandidates = rawDecisionLists.flat().filter((raw) => !raw.isRecapOnly);
     const mergedCandidates = await mergeDecisionCandidates(db, rawCandidates);
 
-    const generationDecisions = buildValidatedDecisions(
-      mergedCandidates,
+    const stored = loadAccumulatedDecisions(db, request.projectId);
+    const accumulatedCandidates = await accumulateAcrossGenerations(db, stored, mergedCandidates);
+
+    // Validated once, here, against the FULL project context - the same
+    // posture as the cross-slice merge above: a candidate re-offered from
+    // storage is verified exactly like a freshly-extracted one, never
+    // trusted just because it passed validation in an earlier generation.
+    const accumulatedDecisions = buildValidatedDecisions(
+      accumulatedCandidates,
       logs,
       clusters,
       excerpts,
@@ -1307,12 +1344,11 @@ export const generateDecisionMap = async (
       ledger !== null
     );
 
-    const stored = loadAccumulatedDecisions(db, request.projectId);
     // id/supersedes are per-generation and per-output only, never persisted -
-    // accumulation identity is (chose, over); supersedes is recomputed fresh
-    // below over the accumulated set every time.
-    const incoming = generationDecisions.map(({ id: _id, supersedes: _supersedes, ...rest }) => rest);
-    const accumulated = accumulateDecisionRecord(stored, incoming);
+    // accumulation identity now lives inside the merge pass itself, not an
+    // exact (chose, over) string key; supersedes is recomputed fresh below
+    // over the accumulated set every time.
+    const accumulated = accumulatedDecisions.map(({ id: _id, supersedes: _supersedes, ...rest }) => rest);
     saveAccumulatedDecisions(db, request.projectId, accumulated);
 
     const withIds: DecisionRecordEntry[] = sortMostRecentFirst(

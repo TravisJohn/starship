@@ -7,13 +7,15 @@ Rules:
 
 Merge two candidates only when their `chose` and `over` clearly describe the same underlying choice. Do not merge two candidates just because they're topically related or from the same log entry - a log entry can genuinely contain more than one real decision, and collapsing those together would lose one of them.
 
+**Watch for a candidate reporting on its own separate occurrence of an earlier decision, not restating it.** A real comparison run merged "stop the gap-date cleanup after 2 retry passes" (2026-07-23) with "stop retrying the 2025-26 gap window for the night" (2026-07-20) into one row - they read almost identically and share the same underlying policy, but they are two separate real incidents on two separate dates, not one decision extracted twice. The giveaway was already in the candidate's own text: its `because` said "**Per the 07-20 lesson**, hammering a connection that's already shown same-day degradation makes things worse rather than better" - explicitly citing an earlier decision as precedent for a new one, not recalling it. Treat phrasing like "per the [earlier] lesson/decision," "as decided before," "consistent with the prior call," or a `because`/evidence anchor that names a different date than another candidate's own anchor, as a signal these are two distinct events even when `chose`/`over` look nearly identical. When you see this, do not merge them - keep both rows.
+
 ## How to merge a group
 
 - `evidence`: union every evidence entry from every candidate in the group, copied verbatim and unmodified from the candidates you were given - never invent a new anchor, never edit an existing one's text. This will be checked programmatically against the real source afterward, so an altered anchor is worse than a redundant one.
 - `because`: may only combine reasons that are directly attested by a surviving evidence entry's own anchor text. Do not synthesize a new rationale that isn't present in any of the group's evidence. If different candidates in the group each attest a genuinely different reason for the same choice, combine them - a decision made for two reasons should say both, not just whichever one happened to be logged. Two sentences maximum, same as the original extraction's altitude rule.
 - Prefer a log-sourced candidate's wording over a transcript-sourced one, reason by reason: if the log covers a given reason, use its phrasing for that reason; if a reason is only attested by a transcript candidate, keep that candidate's own wording for it rather than dropping it. "Prefer log wording" means preferred phrasing where both cover the same ground, not permission to discard a real, evidenced reason the log doesn't happen to mention.
-- `collapsed`: use the highest value among the group, never sum - the group describes one decision seen from multiple angles, not multiple applications of it.
 - `servesIntent` / `reversible`: keep whichever non-null value is present in the group; if members disagree, prefer whichever is best supported by the merged `because`. Never introduce a tag that wasn't present on any candidate in the group.
+- Do not include a `collapsed` field in your output at all - it's computed afterward in code from the merge you produce, not from anything you report.
 - `supersedesChose`: keep if the group agrees on it, and refer to the target by its `chose` text as it appears in YOUR output (not any pre-merge candidate's wording, which may have changed during merging).
 - A candidate with no duplicate in this batch passes through unchanged.
 
@@ -25,7 +27,7 @@ Whenever a candidate's `supersedesChose` (or its `over`/`because` text) is clear
 
 Never fabricate anything beyond what the given candidates already state. When two candidates might be the same decision but you aren't confident, leave them separate - a duplicate that survives is a cosmetic cost; a wrongly-merged pair loses a real distinction.
 
-Return only a JSON object with this shape: {"decisions":[{"chose":"...","over":"...","because":"...","evidence":[{"source":"log","file":"...","anchor":"..."} | {"source":"transcript","sessionId":"...","anchor":"..."}],"servesIntent":"purpose"|"successCriteria"|"acceptedTradeoffs"|"neverDo"|null,"reversible":"cheap"|"load-bearing"|null,"collapsed":1,"supersedesChose":null,"isRecapOnly":false}]}
+Return only a JSON object with this shape: {"decisions":[{"chose":"...","over":"...","because":"...","evidence":[{"source":"log","file":"...","anchor":"..."} | {"source":"transcript","sessionId":"...","anchor":"..."}],"servesIntent":"purpose"|"successCriteria"|"acceptedTradeoffs"|"neverDo"|null,"reversible":"cheap"|"load-bearing"|null,"supersedesChose":null,"isRecapOnly":false}]}
 
 Input:
 {{payload_json}}

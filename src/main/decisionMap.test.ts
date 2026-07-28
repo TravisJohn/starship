@@ -190,6 +190,64 @@ describe("generateDecisionMapSingleCall", () => {
     ]);
   });
 
+  it("computes `collapsed` in code from the reasoning cluster's occurrenceCount, never trusting whatever the model reports", async () => {
+    // Neither the extraction model nor the merge model is asked for
+    // `collapsed` at all anymore (PROJECT_LOG.md 2026-07-27, Checkpoint B:
+    // a real comparison found one model summed instead of maxed it across
+    // merges). A stray `collapsed` in the model's JSON must be ignored
+    // outright, not just validated - the cluster's own occurrenceCount (3,
+    // for the 3 TaskCreate items sharing this reasoning) is the only
+    // number that should ever reach the final decision.
+    writeLines(
+      transcriptPath,
+      assistantText("Running the depth extension season by season, newest first."),
+      incrementalTaskCreate("Player-level backfill: 2025-26"),
+      incrementalTaskCreate("Player-level backfill: 2024-25"),
+      incrementalTaskCreate("Player-level backfill: 2023-24")
+    );
+    vi.mocked(findAllTranscriptsForProject).mockReturnValue([{ path: transcriptPath, mtimeMs: 1 }]);
+    mockDecisions([
+      {
+        chose: "Backfill season by season, newest first",
+        over: "one bulk pull",
+        because: "Newest data ships sooner.",
+        evidence: [
+          {
+            source: "transcript",
+            sessionId: "session",
+            anchor: "Running the depth extension season by season, newest first."
+          }
+        ],
+        collapsed: 99
+      }
+    ]);
+
+    const db = makeDb(ledger);
+    const result = await generateDecisionMapSingleCall(db, { projectId: "proj-1", projectPath: tempDir });
+
+    expect(result.decisions).toHaveLength(1);
+    expect(result.decisions[0].collapsed).toBe(3);
+  });
+
+  it("defaults `collapsed` to 1 for a decision with no matching reasoning cluster, ignoring a stray model-reported value", async () => {
+    writeProjectLog("## 2026-01-01 — Start\n\nChose X over Y because Z.\n");
+    vi.mocked(findAllTranscriptsForProject).mockReturnValue([]);
+    mockDecisions([
+      {
+        chose: "X",
+        over: "Y",
+        because: "Z.",
+        evidence: [{ source: "log", file: "PROJECT_LOG.md", anchor: "Chose X over Y because Z." }],
+        collapsed: 5
+      }
+    ]);
+
+    const db = makeDb(ledger);
+    const result = await generateDecisionMapSingleCall(db, { projectId: "proj-1", projectPath: tempDir });
+
+    expect(result.decisions[0].collapsed).toBe(1);
+  });
+
   it("drops an evidence entry whose anchor isn't verbatim in its named source, and drops a decision whose evidence all fail", async () => {
     writeProjectLog(
       "## 2026-07-20 — Data source decision\n\nChose nba_api over balldontlie.io because of cost.\n"
@@ -565,9 +623,11 @@ describe("generateDecisionMap", () => {
     const result = await generateDecisionMap(db, { projectId: "proj-1", projectPath: tempDir });
 
     // 3 extraction slices (2 logs + 1 combined transcript slice, confirming
-    // the singular/repeated split stays reverted) + 1 merge + 1 dedicated
-    // supersedes pass (3 surviving decisions > 1).
-    expect(runHeadlessClaude).toHaveBeenCalledTimes(5);
+    // the singular/repeated split stays reverted) + 1 cross-slice merge +
+    // 1 accumulation merge (this generation's candidates against the
+    // - empty on a first run - stored set) + 1 dedicated supersedes pass
+    // (3 surviving decisions > 1).
+    expect(runHeadlessClaude).toHaveBeenCalledTimes(6);
     expect(result.decisions.map((d) => d.chose).sort()).toEqual(["N", "P", "X"]);
   });
 
@@ -688,6 +748,105 @@ describe("generateDecisionMap", () => {
 
     expect(result.decisions.map((d) => d.chose).sort()).toEqual(["P", "X"]);
     expect(result.coverage.extractionError).toBeNull();
+  });
+
+  it("accumulates a reworded duplicate across generations into one decision via the merge pass, not a second decision", async () => {
+    // The real bug this test guards against (PROJECT_LOG.md 2026-07-27):
+    // generation 2 re-finds the same underlying decision under new wording,
+    // and the OLD exact (chose, over) string-matching accumulator forked it
+    // into a second row instead of merging it into the first. Accumulation
+    // now routes through the same merge pass used for cross-slice dedup, so
+    // a reworded repeat should merge instead of fork.
+    fs.writeFileSync(
+      path.join(tempDir, "PROJECT_LOG.md"),
+      "## 2026-07-20 — A\n\nNever run two backfill processes against the same SQLite file at once.\n\n## 2026-07-27 — B\n\nRe-run retries sequentially against the SQLite file.\n",
+      "utf8"
+    );
+    vi.mocked(findAllTranscriptsForProject).mockReturnValue([]);
+
+    let generation = 1;
+    vi.mocked(runHeadlessClaude).mockImplementation(async (_db, request) => {
+      if (isSupersedesRequest(request.prompt)) {
+        return JSON.stringify({ supersedes: [] });
+      }
+      if (isMergeRequest(request.prompt)) {
+        const payload = JSON.parse(request.prompt) as { candidates: unknown[] };
+        if (payload.candidates.length === 2) {
+          // Simulates the merge pass recognizing a reworded repeat as the
+          // same underlying decision and combining it into one row, the
+          // same judgment it already applies across slices within one
+          // generation.
+          return JSON.stringify({
+            decisions: [
+              {
+                chose: "Re-run retries sequentially against the SQLite file",
+                over: "Running backfills in parallel",
+                because: "A parallel run crashed with a database lock.",
+                evidence: [
+                  {
+                    source: "log",
+                    file: "PROJECT_LOG.md",
+                    anchor: "Never run two backfill processes against the same SQLite file at once."
+                  },
+                  {
+                    source: "log",
+                    file: "PROJECT_LOG.md",
+                    anchor: "Re-run retries sequentially against the SQLite file."
+                  }
+                ]
+              }
+            ]
+          });
+        }
+        return JSON.stringify({ decisions: payload.candidates });
+      }
+
+      if (generation === 1) {
+        return JSON.stringify({
+          decisions: [
+            {
+              chose: "Never run two backfill processes against the same SQLite file at once",
+              over: "Running backfills in parallel",
+              because: "A parallel run crashed with a database lock.",
+              evidence: [
+                {
+                  source: "log",
+                  file: "PROJECT_LOG.md",
+                  anchor: "Never run two backfill processes against the same SQLite file at once."
+                }
+              ]
+            }
+          ]
+        });
+      }
+
+      return JSON.stringify({
+        decisions: [
+          {
+            chose: "Re-run retries sequentially against the SQLite file",
+            over: "Running backfills in parallel",
+            because: "Retries need to happen one at a time.",
+            evidence: [
+              {
+                source: "log",
+                file: "PROJECT_LOG.md",
+                anchor: "Re-run retries sequentially against the SQLite file."
+              }
+            ]
+          }
+        ]
+      });
+    });
+
+    const db = makeDb(ledger);
+    const first = await generateDecisionMap(db, { projectId: "proj-1", projectPath: tempDir });
+    expect(first.decisions).toHaveLength(1);
+
+    generation = 2;
+    const second = await generateDecisionMap(db, { projectId: "proj-1", projectPath: tempDir });
+
+    expect(second.decisions).toHaveLength(1);
+    expect(second.decisions[0].evidence).toHaveLength(2);
   });
 
   it("skips the merge call entirely when only one slice produced a candidate - nothing to deduplicate", async () => {
