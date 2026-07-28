@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type {
   AgentKind,
   ActivityAppendRequest,
+  ClaudeModelKind,
   MissionDashboardState,
   MissionProject,
   ObservationStatus,
@@ -17,10 +18,19 @@ import { ProjectLogOverlay } from "./ProjectLogOverlay";
 import { ProjectSummaryOverlay } from "./ProjectSummaryOverlay";
 import { StatusDot } from "./StatusDot";
 
+/** Label shown in the model dropdown, keyed by the exact id passed to `claude --model`. */
+const CLAUDE_MODEL_OPTIONS: { value: ClaudeModelKind; label: string }[] = [
+  { value: "claude-sonnet-5", label: "Sonnet 5" },
+  { value: "claude-opus-5", label: "Opus 5" },
+  { value: "claude-fable-5", label: "Fable 5" },
+  { value: "claude-haiku-4-5-20251001", label: "Haiku 4.5" }
+];
+const DEFAULT_CLAUDE_MODEL: ClaudeModelKind = "claude-sonnet-5";
+
 type MissionDashboardProps = {
   onLaunch: (
     project: Project,
-    options: { agent: AgentKind; dangerouslySkipPermissions: boolean }
+    options: { agent: AgentKind; model: ClaudeModelKind; dangerouslySkipPermissions: boolean }
   ) => void;
   onNewProject: (rootPath: string) => void;
   onEditIntent: (project: Project) => void;
@@ -51,6 +61,9 @@ export const MissionDashboard = ({
   const [agentByProjectId, setAgentByProjectId] = useState<Record<string, AgentKind>>(
     {}
   );
+  const [modelByProjectId, setModelByProjectId] = useState<
+    Record<string, ClaudeModelKind>
+  >({});
   const [skipPermissionsByProjectId, setSkipPermissionsByProjectId] = useState<
     Record<string, boolean>
   >({});
@@ -159,6 +172,7 @@ export const MissionDashboard = ({
     setError(null);
 
     const agent = agentByProjectId[missionProject.id] ?? "claude";
+    const model = modelByProjectId[missionProject.id] ?? DEFAULT_CLAUDE_MODEL;
     const dangerouslySkipPermissions =
       skipPermissionsByProjectId[missionProject.id] ?? false;
 
@@ -169,9 +183,9 @@ export const MissionDashboard = ({
       appendActivity({
         eventType: "launch_fired",
         projectId: missionProject.id,
-        detail: { agent, dangerouslySkipPermissions }
+        detail: { agent, model, dangerouslySkipPermissions }
       });
-      onLaunch(project, { agent, dangerouslySkipPermissions });
+      onLaunch(project, { agent, model, dangerouslySkipPermissions });
     } catch (launchError: unknown) {
       setError(stringifyError(launchError));
     }
@@ -248,6 +262,18 @@ export const MissionDashboard = ({
       eventType: "agent_selected",
       projectId,
       detail: { agent }
+    });
+  };
+
+  const selectModel = (projectId: string, model: ClaudeModelKind): void => {
+    setModelByProjectId((current) => ({
+      ...current,
+      [projectId]: model
+    }));
+    appendActivity({
+      eventType: "model_selected",
+      projectId,
+      detail: { model }
     });
   };
 
@@ -390,7 +416,7 @@ export const MissionDashboard = ({
                   <th className="w-16 overflow-hidden border-b border-zinc-800 px-3 py-2 font-medium">
                     Ignore
                   </th>
-                  <th className="w-[26rem] overflow-hidden border-b border-zinc-800 px-3 py-2 font-medium">
+                  <th className="w-72 overflow-hidden border-b border-zinc-800 px-3 py-2 font-medium">
                     Actions
                   </th>
                 </tr>
@@ -471,14 +497,14 @@ export const MissionDashboard = ({
                         className="h-4 w-4 rounded border-zinc-700 bg-zinc-900 text-sky-500 focus:ring-sky-300"
                       />
                     </td>
-                    <td className="w-[26rem] overflow-hidden border-b border-zinc-900 px-3 py-3">
-                      <div className="flex flex-wrap items-center gap-2">
+                    <td className="w-72 overflow-hidden border-b border-zinc-900 px-3 py-3">
+                      <div className="grid grid-cols-2 gap-2">
                         <select
                           value={agentByProjectId[project.id] ?? "claude"}
                           onChange={(event) =>
                             selectAgent(project.id, event.target.value as AgentKind)
                           }
-                          className="h-8 rounded-md border border-zinc-700 bg-zinc-950 px-2 text-xs font-medium text-zinc-100 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                          className="h-8 w-full rounded-md border border-zinc-700 bg-zinc-950 px-2 text-xs font-medium text-zinc-100 focus:outline-none focus:ring-2 focus:ring-sky-300"
                         >
                           <option value="claude">Claude</option>
                           <option value="codex" disabled>
@@ -488,7 +514,22 @@ export const MissionDashboard = ({
                             Antigravity
                           </option>
                         </select>
-                        <label className="inline-flex h-8 items-center gap-2 whitespace-nowrap text-xs text-zinc-300">
+                        <select
+                          value={modelByProjectId[project.id] ?? DEFAULT_CLAUDE_MODEL}
+                          onChange={(event) =>
+                            selectModel(project.id, event.target.value as ClaudeModelKind)
+                          }
+                          disabled={(agentByProjectId[project.id] ?? "claude") !== "claude"}
+                          title="Model used for this project's next Launch/Resume"
+                          className="h-8 w-full rounded-md border border-zinc-700 bg-zinc-950 px-2 text-xs font-medium text-zinc-100 focus:outline-none focus:ring-2 focus:ring-sky-300 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {CLAUDE_MODEL_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                        <label className="inline-flex h-8 w-full items-center gap-2 whitespace-nowrap text-xs text-zinc-300">
                           <input
                             type="checkbox"
                             checked={skipPermissionsByProjectId[project.id] ?? false}
@@ -497,8 +538,15 @@ export const MissionDashboard = ({
                             }
                             className="h-4 w-4 rounded border-zinc-700 bg-zinc-900 text-sky-500 focus:ring-sky-300"
                           />
-                          Skip permissions
+                          <span className="truncate">Skip permissions</span>
                         </label>
+                        <button
+                          type="button"
+                          onClick={() => void launchProject(project)}
+                          className="h-8 w-full rounded-md border border-zinc-700 px-3 text-xs font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                        >
+                          {runningProjectIds.has(project.id) ? "Resume" : "Launch"}
+                        </button>
                         <button
                           type="button"
                           disabled={project.lastActivityAt !== null}
@@ -508,7 +556,7 @@ export const MissionDashboard = ({
                               : undefined
                           }
                           onClick={() => openIntent(project)}
-                          className={`h-8 rounded-md border px-3 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-sky-300 ${
+                          className={`h-8 w-full truncate rounded-md border px-3 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-sky-300 ${
                             project.lastActivityAt !== null
                               ? "cursor-not-allowed border-zinc-800 text-zinc-500 opacity-60"
                               : "border-zinc-700 text-zinc-100 hover:border-sky-400 hover:text-sky-200"
@@ -518,36 +566,31 @@ export const MissionDashboard = ({
                         </button>
                         <button
                           type="button"
-                          onClick={() => void launchProject(project)}
-                          className="h-8 rounded-md border border-zinc-700 px-3 text-xs font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
-                        >
-                          {runningProjectIds.has(project.id) ? "Resume" : "Launch"}
-                        </button>
-                        <button
-                          type="button"
                           onClick={() => openFileMap(project)}
-                          className="h-8 rounded-md border border-zinc-700 px-3 text-xs font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                          className="h-8 w-full truncate rounded-md border border-zinc-700 px-3 text-xs font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
                         >
                           File Map
                         </button>
                         <button
                           type="button"
+                          title="Decision Record"
                           onClick={() => openDecisionMap(project)}
-                          className="h-8 rounded-md border border-zinc-700 px-3 text-xs font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                          className="h-8 w-full truncate rounded-md border border-zinc-700 px-3 text-xs font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
                         >
                           Decision Record
                         </button>
                         <button
                           type="button"
+                          title="Narrative Journey"
                           onClick={() => openNarrativeJourney(project)}
-                          className="h-8 rounded-md border border-zinc-700 px-3 text-xs font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                          className="h-8 w-full truncate rounded-md border border-zinc-700 px-3 text-xs font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
                         >
                           Narrative Journey
                         </button>
                         <button
                           type="button"
                           onClick={() => openNotes(project)}
-                          className="flex h-8 items-center gap-1.5 rounded-md border border-zinc-700 px-3 text-xs font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                          className="col-span-2 flex h-8 w-full items-center justify-center gap-1.5 rounded-md border border-zinc-700 px-3 text-xs font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
                         >
                           Notes
                           {pendingNoteCount(project.noteStatusCounts) > 0 ? (

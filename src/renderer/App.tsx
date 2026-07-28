@@ -387,9 +387,11 @@ export const App = (): JSX.Element => {
             onLaunch={(project, options) => {
               launchSession({
                 project,
-                args: options.dangerouslySkipPermissions
-                  ? ["--dangerously-skip-permissions"]
-                  : [],
+                args: [
+                  ...(options.dangerouslySkipPermissions ? ["--dangerously-skip-permissions"] : []),
+                  "--model",
+                  options.model
+                ],
                 dangerouslySkipPermissions: options.dangerouslySkipPermissions
               });
             }}

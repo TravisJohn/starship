@@ -151,12 +151,15 @@ const describeActivity = (entry: ActivityLogEntry): string => {
       return "project log opened";
     case "agent_selected":
       return `agent set to ${getString(detail, "agent") ?? "claude"}`;
+    case "model_selected":
+      return `model set to ${getString(detail, "model") ?? "claude-sonnet-5"}`;
     case "skip_permissions_toggled":
       return `skip-permissions ${getBoolean(detail, "enabled") ? "on" : "off"}`;
     case "launch_fired": {
       const agent = getString(detail, "agent") ?? "claude";
+      const model = getString(detail, "model");
       const skip = getBoolean(detail, "dangerouslySkipPermissions") ? "on" : "off";
-      return `launched ${agent} (skip-permissions: ${skip})`;
+      return `launched ${agent}${model ? ` (${model})` : ""} (skip-permissions: ${skip})`;
     }
     default:
       return entry.eventType.replace(/_/g, " ");

@@ -475,3 +475,47 @@ Full suite: 236 tests passing (up from 235), typecheck clean.
 
 **Stopping here for the night.** Nothing further queued; the model
 decision and any next real generation are next-session calls.
+
+## 2026-07-28 — Mission Dashboard: Actions column stacked, per-launch model selector
+
+Two refinements to the dashboard row actions, no headless calls involved.
+
+**Actions column restacked into a 2-column grid** (`MissionDashboard.tsx`),
+replacing the old single wide `flex flex-wrap` row (`w-[26rem]`/416px) with
+`grid grid-cols-2 gap-2` at `w-72`/288px - a real width reduction, not just a
+visual rearrange. Grouped as: Agent+Model selects, Skip permissions+Launch,
+Intent+File Map, Decision Record+Narrative Journey, with Notes spanning both
+columns as the odd one out. Verified visually via the `verify` skill
+(Playwright-driven real Electron launch, not just a build check) - confirmed
+no label truncation at the chosen width and added `title` tooltips on
+Decision Record/Narrative Journey as a safety net regardless.
+
+**Added a per-project Model dropdown** (Sonnet 5 / Opus 5 / Fable 5 /
+Haiku 4.5, values are the full canonical model ids) next to the existing
+Agent selector. Unlike Agent (still a scaffolded no-op - Codex/Antigravity
+are disabled placeholder options that don't wire to anything), Model
+actually does something: the selected value is passed as `--model <id>` in
+the args `Launch`/`Resume` spawns the `claude` pty with
+(`App.tsx`'s `onLaunch` handler). Disabled whenever Agent isn't `"claude"`,
+since there's no model list wired for the other agents yet. New
+`ClaudeModelKind` type in `shared/ipc.ts`; new `model_selected` activity
+event and an updated `launch_fired` description in `ActivityLog.tsx`.
+
+Full suite: 236 tests passing (unchanged - pure UI/wiring, no new test
+surface), typecheck clean across shared/main/renderer.
+
+**Also discussed, not built:** whether Codex (or another agent) could feed
+Starship's observation pipeline. Conclusion, bookmarked in memory rather
+than acted on: embedding another agent's TUI in the same terminal pane would
+be cheap (pty spawn is command-agnostic), but Kanban/Timeline/Intent/
+Decision Record depend on Claude's own JSONL format - a real scope
+expansion, not a refinement. One promising angle for a later session:
+`readProjectLogs` just reads `PROJECT_LOG.md` by filename, agent-agnostic -
+if another agent is instructed (via its own equivalent of this file, e.g.
+Codex's `AGENTS.md`) to maintain that log in the same dated-heading
+convention, the *log-sourced* half of Decision Record would already read it
+today, zero Starship changes. The *transcript-sourced* half (Kanban,
+Timeline, Intent annotation) would still need Claude's raw JSONL - no
+amount of "narrate diligently" instruction is a real substitute for that,
+since it's self-reported summary rather than a mechanical ground-truth
+record. No timeline on this - revisit when there's energy for it.

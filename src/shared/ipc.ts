@@ -2,6 +2,13 @@ export type ProjectId = string;
 export type PtySessionId = string;
 export type AgentKind = "claude" | "codex" | "antigravity";
 
+/** Only Claude models are launchable today - codex/antigravity have no wired model list yet (see AgentKind). */
+export type ClaudeModelKind =
+  | "claude-sonnet-5"
+  | "claude-opus-5"
+  | "claude-fable-5"
+  | "claude-haiku-4-5-20251001";
+
 export type Project = {
   id: ProjectId;
   name: string;
