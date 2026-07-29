@@ -1,5 +1,59 @@
 # Starship Project Log
 
+## 2026-07-29 — Mission Dashboard styling refresh (branch: feature/dashboard-styling-refresh)
+
+Scoped down from an earlier full-mockup proposal (sidebar nav, tags, search,
+favorites, editable Health Notes, global Activity/Notes views) to a
+styling-only pass on the existing Mission Dashboard - same data, same
+navigation model, no new SQLite tables. Done on its own branch specifically
+so it's a clean revert if it doesn't earn its keep, rather than touching
+`main`.
+
+**What changed:**
+- New `StatTiles.tsx`: Total/Active/Idle/Needs Attention/Ignored counts
+  above the table, derived entirely from data the dashboard already fetches
+  (`statusByProjectId`, `project.ignored`) - no new field.
+- New `HealthBar.tsx`: replaces the old per-status pill strip
+  (`NoteHealth`, now deleted) with one weighted score (fresh=25/
+  implemented=50/tested=75/verified=100, averaged) rendered as a segmented
+  bar + percentage + Excellent/Good/Fair/Needs work label. A project with
+  zero notes still shows "No notes" rather than a fabricated score.
+- New `ProjectDetailPanel.tsx`: the per-row action grid (Launch, File Map,
+  Decision Record, Narrative Journey, Notes, Model & Provider selects, Skip
+  permissions) moved out of an inline 2-column grid duplicated on every
+  table row, into one panel for whichever project is selected. Every
+  handler it calls already took a project/projectId before this change -
+  this only relocates rendering, not the underlying launch/annotate/notes
+  state.
+- Table's Ignore checkbox column removed; ignoring now lives as a text
+  toggle at the bottom of the detail panel.
+
+**Assumptions made (no explicit sign-off needed, but worth surfacing):**
+- Selected project defaults to the first visible row rather than starting
+  with nothing selected, so the panel is never empty on load.
+- If the selected project gets filtered out (e.g. ignored while selected,
+  and "Show ignored" is off), the panel falls back to the new first visible
+  project rather than closing - confirmed live via the verify skill, no
+  crash.
+- Kept the existing Activity heatmap column and the clickable
+  PRD-summary/Project-Log-entry links under the project name unchanged;
+  the mockup that inspired this pass didn't show either, but neither was
+  asked to be cut and both are real existing signal.
+
+**Verified live** via the `verify` skill (Playwright-driven real Electron
+launch against a scratch root of empty throwaway project folders, so no
+real headless `claude -p` call fired): stat tiles render, row click selects
+and highlights, detail panel switches project and fires the same
+File Map/Decision Record/Narrative Journey/Notes/Launch behavior as before,
+health bar renders correctly including the "No notes" case, ignore-toggle
+fallback doesn't crash. Full suite (236 tests) and typecheck both clean
+before the live pass.
+
+**Not done, deliberately out of scope for this pass:** sidebar navigation,
+tags, search, favorites/star, global (cross-project) Activity/Notes views,
+editable Health Notes, the account/workspace chip - all from the original
+mockup, parked as a separate, larger decision if wanted later.
+
 ## 2026-07-26 — Decision Record rebuild, verification paused
 
 Code complete and committed: accumulation store, supersedes as its own pass, transcript-slice split reverted. Tests passing, typecheck clean.
