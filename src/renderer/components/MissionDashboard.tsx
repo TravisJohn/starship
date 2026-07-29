@@ -10,6 +10,7 @@ import type {
 } from "../../shared/ipc";
 import { DecisionMapOverlay } from "./DecisionMapOverlay";
 import { FileMapOverlay } from "./FileMapOverlay";
+import { GitTreeOverlay } from "./GitTreeOverlay";
 import { HealthBar } from "./HealthBar";
 import { LoadingAnimation } from "./LoadingAnimation";
 import { NarrativeJourneyOverlay } from "./NarrativeJourneyOverlay";
@@ -67,6 +68,7 @@ export const MissionDashboard = ({
   const [narrativeJourneyProject, setNarrativeJourneyProject] = useState<MissionProject | null>(
     null
   );
+  const [gitTreeProject, setGitTreeProject] = useState<MissionProject | null>(null);
   const [notesProject, setNotesProject] = useState<MissionProject | null>(null);
   const [projectLogProject, setProjectLogProject] =
     useState<MissionProject | null>(null);
@@ -213,6 +215,11 @@ export const MissionDashboard = ({
   const openNarrativeJourney = (project: MissionProject): void => {
     appendActivity({ eventType: "narrative_journey_opened", projectId: project.id });
     setNarrativeJourneyProject(project);
+  };
+
+  const openGitTree = (project: MissionProject): void => {
+    appendActivity({ eventType: "git_tree_opened", projectId: project.id });
+    setGitTreeProject(project);
   };
 
   const openNotes = (project: MissionProject): void => {
@@ -537,6 +544,7 @@ export const MissionDashboard = ({
                   onOpenFileMap={() => openFileMap(selectedProject)}
                   onOpenDecisionMap={() => openDecisionMap(selectedProject)}
                   onOpenNarrativeJourney={() => openNarrativeJourney(selectedProject)}
+                  onOpenGitTree={() => openGitTree(selectedProject)}
                   onOpenNotes={() => openNotes(selectedProject)}
                   onToggleIgnored={() => void setIgnored(selectedProject)}
                   isTogglingIgnored={busyPath === selectedProject.path}
@@ -563,6 +571,10 @@ export const MissionDashboard = ({
       <NarrativeJourneyOverlay
         project={narrativeJourneyProject}
         onClose={() => setNarrativeJourneyProject(null)}
+      />
+      <GitTreeOverlay
+        project={gitTreeProject}
+        onClose={() => setGitTreeProject(null)}
       />
       <NotesOverlay
         project={notesProject}

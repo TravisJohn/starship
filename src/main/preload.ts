@@ -56,6 +56,10 @@ const api: StarshipApi = {
     generate: (request) => ipcRenderer.invoke("fileMap:generate", request),
     download: (request) => ipcRenderer.invoke("fileMap:download", request)
   },
+  gitTree: {
+    generate: (request) => ipcRenderer.invoke("gitTree:generate", request),
+    download: (request) => ipcRenderer.invoke("gitTree:download", request)
+  },
   decisionMap: {
     generate: (request) => ipcRenderer.invoke("decisionMap:generate", request),
     download: (request) => ipcRenderer.invoke("decisionMap:download", request)

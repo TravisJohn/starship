@@ -54,6 +54,32 @@ tags, search, favorites/star, global (cross-project) Activity/Notes views,
 editable Health Notes, the account/workspace chip - all from the original
 mockup, parked as a separate, larger decision if wanted later.
 
+## 2026-07-29 — Git Tree action added (same branch)
+
+New "Git Tree" button in the Project Detail Panel, next to Narrative
+Journey. Shells out to `git log` (reusing the same spawn/resolveGitCommand
+pattern `inception/createProject.ts` already uses for `git init`) and
+renders the commit list with the same self-contained-HTML-with-inline-JS
+pattern as File Map and Decision Record - no headless LLM call involved at
+all, since git already provides structured history data directly.
+
+**Scoping assumption (no explicit sign-off, logged per the "make a
+reasonable call" instruction):** this renders a straight, single-lane
+commit list (plain `git log` on HEAD, most-recent-first) - not a full
+multi-branch graph with lane assignment the way gitk/GitKraken draw one.
+A merge commit still appears and is tagged with its parent count, it just
+isn't drawn as a second visual lane. Real branch-lane layout is a
+meaningfully harder problem than this pass was scoped for; worth a
+dedicated decision later if actually wanted.
+
+Verified live via the `verify` skill against a real temp git repo (two
+commits): commit list renders with hash/subject/author/date/ref badges,
+click-to-detail pane shows full hash and parent list. Also covered with
+real (non-mocked) `generateGitTree` tests against a throwaway temp repo,
+including one exercising an actual `git merge --no-ff` to confirm
+`isMerge`/parent-count detection. Full suite (241 tests, up from 236) and
+typecheck clean.
+
 ## 2026-07-26 — Decision Record rebuild, verification paused
 
 Code complete and committed: accumulation store, supersedes as its own pass, transcript-slice split reverted. Tests passing, typecheck clean.

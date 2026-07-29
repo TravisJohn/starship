@@ -38,6 +38,7 @@ type ProjectDetailPanelProps = {
   onOpenFileMap: () => void;
   onOpenDecisionMap: () => void;
   onOpenNarrativeJourney: () => void;
+  onOpenGitTree: () => void;
   onOpenNotes: () => void;
   onToggleIgnored: () => void;
   isTogglingIgnored: boolean;
@@ -67,6 +68,7 @@ export const ProjectDetailPanel = ({
   onOpenFileMap,
   onOpenDecisionMap,
   onOpenNarrativeJourney,
+  onOpenGitTree,
   onOpenNotes,
   onToggleIgnored,
   isTogglingIgnored,
@@ -131,6 +133,14 @@ export const ProjectDetailPanel = ({
           className="h-9 rounded-md border border-zinc-700 text-sm font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
         >
           Narrative Journey
+        </button>
+        <button
+          type="button"
+          title="Git Tree"
+          onClick={onOpenGitTree}
+          className="h-9 rounded-md border border-zinc-700 text-sm font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
+        >
+          Git Tree
         </button>
         <button
           type="button"

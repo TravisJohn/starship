@@ -189,6 +189,44 @@ export type FileMapDownloadResponse = {
   savedPath: string | null;
 };
 
+export type GitCommitEntry = {
+  hash: string;
+  shortHash: string;
+  parents: string[];
+  author: string;
+  date: string;
+  refs: string[];
+  subject: string;
+  isMerge: boolean;
+};
+
+export type GitTreeResult = {
+  commits: GitCommitEntry[];
+  generatedAt: string;
+  notARepo: boolean;
+};
+
+export type GitTreeGenerateRequest = {
+  projectId: ProjectId;
+  projectPath: string;
+};
+
+export type GitTreeGenerateResponse = {
+  html: string;
+  commitCount: number;
+  generatedAt: string;
+  notARepo: boolean;
+};
+
+export type GitTreeDownloadRequest = {
+  html: string;
+  projectName: string;
+};
+
+export type GitTreeDownloadResponse = {
+  savedPath: string | null;
+};
+
 export type ProjectLogSummarizeRequest = {
   title: string;
   body: string;
@@ -636,6 +674,14 @@ export type RendererToMainInvokeMap = {
     request: FileMapDownloadRequest;
     response: FileMapDownloadResponse;
   };
+  "gitTree:generate": {
+    request: GitTreeGenerateRequest;
+    response: GitTreeGenerateResponse;
+  };
+  "gitTree:download": {
+    request: GitTreeDownloadRequest;
+    response: GitTreeDownloadResponse;
+  };
   "decisionMap:generate": {
     request: DecisionMapGenerateRequest;
     response: DecisionMapGenerateResponse;
@@ -780,6 +826,10 @@ export type StarshipApi = {
   fileMap: {
     generate: (request: FileMapGenerateRequest) => Promise<FileMapGenerateResponse>;
     download: (request: FileMapDownloadRequest) => Promise<FileMapDownloadResponse>;
+  };
+  gitTree: {
+    generate: (request: GitTreeGenerateRequest) => Promise<GitTreeGenerateResponse>;
+    download: (request: GitTreeDownloadRequest) => Promise<GitTreeDownloadResponse>;
   };
   decisionMap: {
     generate: (request: DecisionMapGenerateRequest) => Promise<DecisionMapGenerateResponse>;
