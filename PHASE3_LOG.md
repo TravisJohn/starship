@@ -125,7 +125,11 @@ criteria before being accepted here:
   is shared between `correlate.ts` and `dashboard.ts`; if Claude Code changes its slug algorithm
   in a future version, both live correlation and dashboard "last activity" silently stop
   matching (fails safe — unresolved/null — rather than misattributing, but the feature goes
-  dark).
+  dark). **This risk materialised on 2026-08-06** — not from Claude Code changing, but from our
+  rule having been wrong for `.`/`_` all along. Worth noting the failure mode is exactly as
+  predicted here: silent, per-project, no error anywhere. There is still no surface that tells
+  the user "I expected a transcript directory and found none" — a targeted diagnostic would
+  have turned a debugging session into a glance.
 - **The permission-classification heuristic in `statusEngine.ts` is explicitly not a full
   settings.json allow-list engine.** Documented and accepted as an over-notify risk, not a
   missed-notification risk — but worth remembering if Travis's actual custom allow-list entries
@@ -161,6 +165,10 @@ Root cause was narrowed, not fully fixed, by testing each layer in isolation aga
 real directory involved:
 - `resolveClaudeProjectDir`'s slug computation is correct — manually computed and matched the
   real `~/.claude/projects/<slug>` directory name exactly.
+  - **Superseded 2026-08-06.** True for the project checked here (`starship`), but not in
+    general: the rule then in use missed `.` and `_`, so it silently resolved to a nonexistent
+    directory for `Wise Cow 2.0` and `my_portfolio`. Checking a single path whose name happened
+    to contain neither character is what let it pass. See PROJECT_LOG.md, same date.
 - `chokidar` itself correctly emits `add` events for new files written into that exact existing
   directory at `depth: 1` (confirmed with a standalone reproduction).
 - `correlateSession` (the compiled `dist/main/observation/correlate.js`), invoked directly and

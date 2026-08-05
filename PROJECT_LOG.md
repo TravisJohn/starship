@@ -599,3 +599,51 @@ Timeline, Intent annotation) would still need Claude's raw JSONL - no
 amount of "narrate diligently" instruction is a real substitute for that,
 since it's self-reported summary rather than a mechanical ground-truth
 record. No timeline on this - revisit when there's energy for it.
+
+## 2026-08-06 — Fix: project slug dropped `.` and `_`, blanking observation for affected projects
+
+**Reported symptom:** Wise Cow 2.0 showed no live signals, no "last activity",
+and produced nothing on "exit and summarize".
+
+**Root cause.** `slugProjectPath` (`src/main/observation/slug.ts`) reproduced
+Claude Code's `~/.claude/projects/<slug>/` directory naming by replacing only
+`:`, `\`, `/` and space with `-`. The real rule replaces *every* non-ASCII-
+alphanumeric character. Any project whose folder name contained a `.` or `_`
+therefore resolved to a directory that does not exist:
+
+    D:\WEB PROJECTS\Wise Cow 2.0  ->  ...-Wise-Cow-2.0   (computed, missing)
+                                  ->  ...-Wise-Cow-2-0   (real, 2 transcripts)
+
+Two projects on this machine were affected: `Wise Cow 2.0` and `my_portfolio`.
+
+**Why one bug produced all three symptoms.** Everything downstream resolves
+through that one function, and every consumer fails *safe* rather than loud:
+`correlateSession` filters candidate transcripts by the target-directory
+prefix and simply never matches (stays unresolved — no live signals);
+`findAllTranscriptsForProject` swallows the `readdirSync` ENOENT and returns
+`[]` (no last activity); `briefing.ts` reads through `findNewestTranscript`,
+so it had no transcript to summarize. Nothing errored anywhere — the feature
+just went dark for those projects.
+
+**Why it survived Phase 3 verification.** PHASE3_LOG.md recorded the slug as
+"correct — manually computed and matched the real directory name exactly."
+That was true, but was checked against `D:\WEB PROJECTS\starship`, whose name
+contains neither of the two characters that break. Correcting that note.
+
+**Fix.** Rule is now `replace(/[^a-zA-Z0-9]/g, "-")`, verified empirically
+against all 24 real project directories on this machine by comparing each
+transcript's own `cwd` field to its containing directory name — the new rule
+matches all 24, the old rule missed 2. The duplicated copies of the rule in
+`templates/permission-hook.cjs` and `scripts/acceptance-phase3.cjs` were
+updated in lockstep (the hook names the signal files Starship reads back, so
+the pair must agree). No signal files existed on disk, so no old-named data
+was orphaned by the change.
+
+**Decision:** kept one shared `slugProjectPath` rather than splitting it into
+separate "Claude directory" and "our signal file" functions. The two uses are
+genuinely different contracts and a split is defensible, but with no signal
+files to preserve there was nothing to gain, and a silently diverging pair is
+a worse failure mode than the documented duplication.
+
+Regression tests pin the dot, the underscore, and case preservation. Full
+suite 252 passing, typecheck clean.
