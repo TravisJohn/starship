@@ -74,7 +74,7 @@ const submitPrompt = async (page, promptText, recognizableFragment) => {
 // two real examples this was reverse-engineered from), so this script can
 // locate the transcript Claude Code actually wrote and read ground-truth
 // timestamps out of it for the kanban-lag measurement below.
-const slugProjectPath = (absolutePath) => absolutePath.replace(/[:\\/ ]/g, "-");
+const slugProjectPath = (absolutePath) => absolutePath.replace(/[^a-zA-Z0-9]/g, "-");
 
 const findNewestTranscript = (claudeProjectsRoot, projectPath) => {
   const dir = path.join(claudeProjectsRoot, slugProjectPath(path.resolve(projectPath)));

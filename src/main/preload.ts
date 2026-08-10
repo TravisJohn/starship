@@ -45,7 +45,8 @@ const api: StarshipApi = {
     getLoadingMedia: () => ipcRenderer.invoke("assets:getLoadingMedia")
   },
   project: {
-    getPhases: (request) => ipcRenderer.invoke("project:getPhases", request)
+    getPhases: (request) => ipcRenderer.invoke("project:getPhases", request),
+    getInitialPlan: (request) => ipcRenderer.invoke("project:getInitialPlan", request)
   },
   briefing: {
     generate: (request) => ipcRenderer.invoke("briefing:generate", request),
@@ -55,6 +56,10 @@ const api: StarshipApi = {
   fileMap: {
     generate: (request) => ipcRenderer.invoke("fileMap:generate", request),
     download: (request) => ipcRenderer.invoke("fileMap:download", request)
+  },
+  gitTree: {
+    generate: (request) => ipcRenderer.invoke("gitTree:generate", request),
+    download: (request) => ipcRenderer.invoke("gitTree:download", request)
   },
   decisionMap: {
     generate: (request) => ipcRenderer.invoke("decisionMap:generate", request),

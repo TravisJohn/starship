@@ -3,6 +3,7 @@ import type {
   InceptionDraftDocumentsResponse,
   InceptionInterview
 } from "../../shared/ipc";
+import { MarkdownView } from "./MarkdownView";
 
 type InceptionReviewProps = {
   interview: InceptionInterview;
@@ -77,13 +78,54 @@ type EditorProps = {
   onChange: (value: string) => void;
 };
 
-const Editor = ({ label, value, onChange }: EditorProps): JSX.Element => (
-  <label className="flex min-h-0 flex-col">
-    <span className="mb-2 text-sm font-medium text-zinc-200">{label}</span>
-    <textarea
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-      className="min-h-0 flex-1 resize-none rounded-md border border-zinc-800 bg-zinc-900 px-3 py-3 font-mono text-sm leading-6 text-zinc-100 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-400/30"
-    />
-  </label>
+type EditorMode = "preview" | "edit";
+
+const Editor = ({ label, value, onChange }: EditorProps): JSX.Element => {
+  const [mode, setMode] = useState<EditorMode>("preview");
+
+  return (
+    <div className="flex min-h-0 flex-col">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-sm font-medium text-zinc-200">{label}</span>
+        <div className="flex rounded-md border border-zinc-800 p-0.5 text-xs">
+          <ModeButton active={mode === "preview"} onClick={() => setMode("preview")}>
+            Preview
+          </ModeButton>
+          <ModeButton active={mode === "edit"} onClick={() => setMode("edit")}>
+            Edit
+          </ModeButton>
+        </div>
+      </div>
+
+      {mode === "preview" ? (
+        <div className="min-h-0 flex-1 overflow-y-auto rounded-md border border-zinc-800 bg-zinc-900 px-4 py-3">
+          <MarkdownView>{value}</MarkdownView>
+        </div>
+      ) : (
+        <textarea
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          className="min-h-0 flex-1 resize-none rounded-md border border-zinc-800 bg-zinc-900 px-3 py-3 font-mono text-sm leading-6 text-zinc-100 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-400/30"
+        />
+      )}
+    </div>
+  );
+};
+
+type ModeButtonProps = {
+  active: boolean;
+  onClick: () => void;
+  children: string;
+};
+
+const ModeButton = ({ active, onClick, children }: ModeButtonProps): JSX.Element => (
+  <button
+    type="button"
+    onClick={onClick}
+    className={`rounded px-2 py-1 font-medium transition-colors ${
+      active ? "bg-sky-500 text-zinc-950" : "text-zinc-400 hover:text-zinc-100"
+    }`}
+  >
+    {children}
+  </button>
 );

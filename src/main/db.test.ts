@@ -46,6 +46,23 @@ vi.mock("better-sqlite3", () => {
     updated_at: string;
   };
 
+  type ProjectRow = {
+    id: string;
+    name: string;
+    path: string;
+    created_at: string;
+  };
+
+  type IntentLedgerRow = {
+    project_id: string;
+    purpose: string;
+    success_criteria: string;
+    accepted_tradeoffs: string;
+    never_do: string;
+    created_at: string;
+    updated_at: string;
+  };
+
   class FakeDatabase {
     private rows: ActivityLogRow[] = [];
     private nextId = 1;
@@ -53,6 +70,8 @@ vi.mock("better-sqlite3", () => {
     private briefingHistory: BriefingHistoryRow[] = [];
     private nextBriefingHistoryId = 1;
     private notes: NoteRow[] = [];
+    private projects: ProjectRow[] = [];
+    private intentLedgers = new Map<string, IntentLedgerRow>();
 
     pragma(): void {
       return undefined;
@@ -68,14 +87,23 @@ vi.mock("better-sqlite3", () => {
 
     prepare(sql: string): {
       run: (...args: unknown[]) => { lastInsertRowid: number };
-      get: (...args: unknown[]) => ActivityLogRow | SessionBriefingRow | NoteRow | undefined;
+      get: (
+        ...args: unknown[]
+      ) =>
+        | ActivityLogRow
+        | SessionBriefingRow
+        | NoteRow
+        | ProjectRow
+        | IntentLedgerRow
+        | undefined;
       all: (
         ...args: unknown[]
       ) =>
         | ActivityLogRow[]
         | NoteRow[]
         | BriefingHistoryRow[]
-        | { project_id: string; status: string; count: number }[];
+        | { project_id: string; status: string; count: number }[]
+        | { project_id: string }[];
     } {
       return {
         run: (...args: unknown[]) => {
@@ -159,6 +187,39 @@ vi.mock("better-sqlite3", () => {
             return { lastInsertRowid: 0 };
           }
 
+          if (sql.includes("insert into projects")) {
+            const [id, name, projectPath, createdAt] = args as string[];
+            this.projects.push({
+              id,
+              name,
+              path: projectPath,
+              created_at: createdAt
+            });
+            return { lastInsertRowid: 0 };
+          }
+
+          if (sql.includes("insert into intent_ledger")) {
+            const [
+              projectId,
+              purpose,
+              successCriteria,
+              acceptedTradeoffs,
+              neverDo,
+              createdAt,
+              updatedAt
+            ] = args as string[];
+            this.intentLedgers.set(projectId, {
+              project_id: projectId,
+              purpose,
+              success_criteria: successCriteria,
+              accepted_tradeoffs: acceptedTradeoffs,
+              never_do: neverDo,
+              created_at: createdAt,
+              updated_at: updatedAt
+            });
+            return { lastInsertRowid: 0 };
+          }
+
           return { lastInsertRowid: 0 };
         },
         get: (...args: unknown[]) => {
@@ -175,6 +236,24 @@ vi.mock("better-sqlite3", () => {
           if (sql.includes("from notes") && sql.includes("where id = ?")) {
             const [id] = args as string[];
             return this.notes.find((row) => row.id === id);
+          }
+
+          if (sql.includes("from projects") && sql.includes("where id = ?")) {
+            const [id] = args as string[];
+            return this.projects.find((row) => row.id === id);
+          }
+
+          if (sql.includes("from projects") && sql.includes("where path = ?")) {
+            const [projectPath] = args as string[];
+            return this.projects.find((row) => row.path === projectPath);
+          }
+
+          if (
+            sql.includes("from intent_ledger") &&
+            sql.includes("where project_id = ?")
+          ) {
+            const [projectId] = args as string[];
+            return this.intentLedgers.get(projectId);
           }
 
           return undefined;
@@ -210,6 +289,16 @@ vi.mock("better-sqlite3", () => {
               }
             }
             return rows;
+          }
+
+          if (
+            sql.includes("from intent_ledger") &&
+            sql.includes("project_id in")
+          ) {
+            const projectIds = args as string[];
+            return projectIds
+              .filter((projectId) => this.intentLedgers.has(projectId))
+              .map((projectId) => ({ project_id: projectId }));
           }
 
           if (!sql.includes("from activity_log")) {
@@ -503,5 +592,82 @@ describe("StarshipDb notes", () => {
 
   it("returns an empty map for an empty project id list", () => {
     expect(db.getNoteStatusCounts([])).toEqual(new Map());
+  });
+});
+
+describe("StarshipDb intent ledger presence", () => {
+  let tempDir: string;
+  let db: StarshipDb;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "starship-db-intent-"));
+    db = new StarshipDb(path.join(tempDir, "starship.sqlite"));
+  });
+
+  afterEach(() => {
+    db.close();
+    fs.rmSync(tempDir, { force: true, recursive: true });
+  });
+
+  it("reports no ledger for a shelved project that never went through Inception", () => {
+    const project = db.addProject(path.join(tempDir, "shelved-project"));
+
+    expect(db.getProjectIdsWithIntentLedger([project.id])).toEqual(new Set());
+  });
+
+  it("reports a ledger once intent is retrofitted onto an existing project", () => {
+    const project = db.addProject(path.join(tempDir, "shelved-project"));
+    db.saveIntentLedger({
+      projectId: project.id,
+      purpose: "Stop losing the thread between sessions.",
+      successCriteria: "I can pick it up cold and know why it exists.",
+      acceptedTradeoffs: "Single user, local only.",
+      neverDo: "Never act on the project's behalf."
+    });
+
+    expect(db.getProjectIdsWithIntentLedger([project.id])).toEqual(
+      new Set([project.id])
+    );
+  });
+
+  /**
+   * Retrofitted intent is often only partly recoverable, so the editor saves
+   * whatever the builder can answer. A ledger with blank answers still counts
+   * as captured - otherwise the shelf would keep nagging about a project the
+   * builder has already deliberately answered.
+   */
+  it("counts a partially answered ledger as captured", () => {
+    const project = db.addProject(path.join(tempDir, "half-answered"));
+    db.saveIntentLedger({
+      projectId: project.id,
+      purpose: "Scratch an itch I keep coming back to.",
+      successCriteria: "",
+      acceptedTradeoffs: "",
+      neverDo: ""
+    });
+
+    expect(db.getProjectIdsWithIntentLedger([project.id])).toEqual(
+      new Set([project.id])
+    );
+  });
+
+  it("separates projects with and without a ledger in one batched lookup", () => {
+    const withLedger = db.addProject(path.join(tempDir, "with-ledger"));
+    const withoutLedger = db.addProject(path.join(tempDir, "without-ledger"));
+    db.saveIntentLedger({
+      projectId: withLedger.id,
+      purpose: "A reason.",
+      successCriteria: "A finish line.",
+      acceptedTradeoffs: "A cost.",
+      neverDo: "A boundary."
+    });
+
+    expect(
+      db.getProjectIdsWithIntentLedger([withLedger.id, withoutLedger.id])
+    ).toEqual(new Set([withLedger.id]));
+  });
+
+  it("returns an empty set for an empty project id list", () => {
+    expect(db.getProjectIdsWithIntentLedger([])).toEqual(new Set());
   });
 });

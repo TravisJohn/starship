@@ -10,21 +10,18 @@ import type {
 } from "../../shared/ipc";
 import { DecisionMapOverlay } from "./DecisionMapOverlay";
 import { FileMapOverlay } from "./FileMapOverlay";
+import { GitTreeOverlay } from "./GitTreeOverlay";
+import { InitialPlanOverlay } from "./InitialPlanOverlay";
+import { HealthBar } from "./HealthBar";
 import { LoadingAnimation } from "./LoadingAnimation";
 import { NarrativeJourneyOverlay } from "./NarrativeJourneyOverlay";
-import { NOTE_STATUS_META, NOTE_STATUS_ORDER } from "../noteStatus";
 import { NotesOverlay } from "./NotesOverlay";
+import { ProjectDetailPanel } from "./ProjectDetailPanel";
 import { ProjectLogOverlay } from "./ProjectLogOverlay";
 import { ProjectSummaryOverlay } from "./ProjectSummaryOverlay";
+import { StatTiles } from "./StatTiles";
 import { StatusDot } from "./StatusDot";
 
-/** Label shown in the model dropdown, keyed by the exact id passed to `claude --model`. */
-const CLAUDE_MODEL_OPTIONS: { value: ClaudeModelKind; label: string }[] = [
-  { value: "claude-sonnet-5", label: "Sonnet 5" },
-  { value: "claude-opus-5", label: "Opus 5" },
-  { value: "claude-fable-5", label: "Fable 5" },
-  { value: "claude-haiku-4-5-20251001", label: "Haiku 4.5" }
-];
 const DEFAULT_CLAUDE_MODEL: ClaudeModelKind = "claude-sonnet-5";
 
 type MissionDashboardProps = {
@@ -72,9 +69,16 @@ export const MissionDashboard = ({
   const [narrativeJourneyProject, setNarrativeJourneyProject] = useState<MissionProject | null>(
     null
   );
+  const [gitTreeProject, setGitTreeProject] = useState<MissionProject | null>(null);
+  const [initialPlanProject, setInitialPlanProject] = useState<MissionProject | null>(null);
   const [notesProject, setNotesProject] = useState<MissionProject | null>(null);
   const [projectLogProject, setProjectLogProject] =
     useState<MissionProject | null>(null);
+  // Which row's actions show in the detail panel - defaults to the first
+  // visible project once the dashboard loads, mirroring the mockup's
+  // "always something selected" posture rather than starting empty.
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [detailPanelVisible, setDetailPanelVisible] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -216,6 +220,16 @@ export const MissionDashboard = ({
     setNarrativeJourneyProject(project);
   };
 
+  const openGitTree = (project: MissionProject): void => {
+    appendActivity({ eventType: "git_tree_opened", projectId: project.id });
+    setGitTreeProject(project);
+  };
+
+  const openInitialPlan = (project: MissionProject): void => {
+    appendActivity({ eventType: "initial_plan_opened", projectId: project.id });
+    setInitialPlanProject(project);
+  };
+
   const openNotes = (project: MissionProject): void => {
     appendActivity({ eventType: "notes_opened", projectId: project.id });
     setNotesProject(project);
@@ -328,6 +342,14 @@ export const MissionDashboard = ({
   const visibleProjects = dashboard.projects.filter(
     (project) => showIgnored || !project.ignored
   );
+  // Whichever project the detail panel shows - the explicitly selected one
+  // if it's still visible, otherwise the first visible row, so the panel is
+  // never left pointing at a project that scrolled out of view (e.g. after
+  // toggling "Show ignored" off).
+  const selectedProject =
+    visibleProjects.find((project) => project.id === selectedProjectId) ??
+    visibleProjects[0] ??
+    null;
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-zinc-950 text-zinc-100">
@@ -361,6 +383,17 @@ export const MissionDashboard = ({
           </button>
           <button
             type="button"
+            onClick={() => setDetailPanelVisible((current) => !current)}
+            className={`h-8 rounded-md border px-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-sky-300 ${
+              detailPanelVisible
+                ? "border-zinc-700 text-zinc-100 hover:border-sky-400 hover:text-sky-200"
+                : "border-sky-500/70 text-sky-200"
+            }`}
+          >
+            {detailPanelVisible ? "Hide Details" : "Show Details"}
+          </button>
+          <button
+            type="button"
             onClick={() => void rescan()}
             className="h-8 rounded-md border border-zinc-700 px-3 text-sm font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
           >
@@ -391,228 +424,164 @@ export const MissionDashboard = ({
             <p className="text-sm text-zinc-400">No folders found under this root</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full table-fixed border-separate border-spacing-0 text-left text-sm">
-              <thead className="text-xs uppercase text-zinc-500">
-                <tr>
-                  <th className="w-56 overflow-hidden border-b border-zinc-800 px-3 py-2 font-medium">
-                    Project
-                  </th>
-                  <th className="w-40 overflow-hidden border-b border-zinc-800 px-3 py-2 font-medium">
-                    Last Activity
-                  </th>
-                  <th className="w-20 overflow-hidden border-b border-zinc-800 px-3 py-2 font-medium">
-                    Size
-                  </th>
-                  <th className="w-32 overflow-hidden border-b border-zinc-800 px-3 py-2 font-medium">
-                    Activity
-                  </th>
-                  <th className="w-24 overflow-hidden border-b border-zinc-800 px-3 py-2 font-medium">
-                    Status
-                  </th>
-                  <th className="w-32 overflow-hidden border-b border-zinc-800 px-3 py-2 font-medium">
-                    Health
-                  </th>
-                  <th className="w-16 overflow-hidden border-b border-zinc-800 px-3 py-2 font-medium">
-                    Ignore
-                  </th>
-                  <th className="w-72 overflow-hidden border-b border-zinc-800 px-3 py-2 font-medium">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleProjects.map((project) => (
-                  <tr
-                    key={project.path}
-                    className={project.ignored ? "text-zinc-500" : "text-zinc-100"}
-                  >
-                    <td className="w-56 overflow-hidden border-b border-zinc-900 px-3 py-3">
-                      <div className="min-w-0">
-                        <p className="truncate font-medium">{project.name}</p>
-                        <p className="mt-1 truncate text-xs text-zinc-500">
-                          {project.path}
-                        </p>
-                        {project.prdSummary ? (
-                          <p
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => openSummary(project)}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter" || event.key === " ") {
-                                event.preventDefault();
-                                openSummary(project);
-                              }
-                            }}
-                            className="mt-1 cursor-pointer truncate text-xs text-sky-200 hover:text-sky-100 focus:outline-none focus:ring-2 focus:ring-sky-300"
-                          >
-                            {project.prdSummary}
-                          </p>
-                        ) : null}
-                        {project.projectLogEntry ? (
-                          <p
-                            role="button"
-                            tabIndex={0}
-                            onClick={() => openProjectLog(project)}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter" || event.key === " ") {
-                                event.preventDefault();
-                                openProjectLog(project);
-                              }
-                            }}
-                            className="mt-1 cursor-pointer truncate text-xs text-sky-200 hover:text-sky-100 focus:outline-none focus:ring-2 focus:ring-sky-300"
-                          >
-                            {project.projectLogEntry.title}
-                          </p>
-                        ) : null}
-                      </div>
-                    </td>
-                    <td className="w-40 overflow-hidden border-b border-zinc-900 px-3 py-3 text-zinc-300">
-                      {formatLastActivity(project.lastActivityAt)}
-                    </td>
-                    <td className="w-20 overflow-hidden border-b border-zinc-900 px-3 py-3 text-zinc-300">
-                      {formatBytes(project.sizeBytes)}
-                    </td>
-                    <td className="w-32 overflow-hidden border-b border-zinc-900 px-3 py-3">
-                      <ActivityHeatmap days={project.activityHeatmap} />
-                    </td>
-                    <td className="w-24 overflow-hidden border-b border-zinc-900 px-3 py-3">
-                      <div className="flex items-center gap-2">
-                        <StatusDot status={statusByProjectId[project.id] ?? "idle"} />
-                        <span className="text-xs text-zinc-400">
-                          {statusByProjectId[project.id] ?? "idle"}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="w-32 overflow-hidden border-b border-zinc-900 px-3 py-3">
-                      <NoteHealth counts={project.noteStatusCounts} />
-                    </td>
-                    <td className="w-16 overflow-hidden border-b border-zinc-900 px-3 py-3">
-                      <input
-                        type="checkbox"
-                        checked={project.ignored}
-                        disabled={busyPath === project.path}
-                        onChange={() => void setIgnored(project)}
-                        aria-label="Ignore"
-                        className="h-4 w-4 rounded border-zinc-700 bg-zinc-900 text-sky-500 focus:ring-sky-300"
-                      />
-                    </td>
-                    <td className="w-72 overflow-hidden border-b border-zinc-900 px-3 py-3">
-                      <div className="grid grid-cols-2 gap-2">
-                        <select
-                          value={agentByProjectId[project.id] ?? "claude"}
-                          onChange={(event) =>
-                            selectAgent(project.id, event.target.value as AgentKind)
+          <>
+            <StatTiles projects={dashboard.projects} statusByProjectId={statusByProjectId} />
+            <div className="flex items-start gap-4">
+              <div className="min-w-0 flex-1 overflow-x-auto">
+                <table className="w-full table-fixed border-separate border-spacing-0 text-left text-sm">
+                  <thead className="text-xs uppercase text-zinc-500">
+                    <tr>
+                      <th className="w-56 overflow-hidden border-b border-zinc-800 px-3 py-2 font-medium">
+                        Project
+                      </th>
+                      <th className="w-40 overflow-hidden border-b border-zinc-800 px-3 py-2 font-medium">
+                        Last Activity
+                      </th>
+                      <th className="w-20 overflow-hidden border-b border-zinc-800 px-3 py-2 font-medium">
+                        Size
+                      </th>
+                      <th className="w-32 overflow-hidden border-b border-zinc-800 px-3 py-2 font-medium">
+                        Activity
+                      </th>
+                      <th className="w-24 overflow-hidden border-b border-zinc-800 px-3 py-2 font-medium">
+                        Status
+                      </th>
+                      <th className="w-32 overflow-hidden border-b border-zinc-800 px-3 py-2 font-medium">
+                        Health
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleProjects.map((project) => (
+                      <tr
+                        key={project.path}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => setSelectedProjectId(project.id)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            setSelectedProjectId(project.id);
                           }
-                          className="h-8 w-full rounded-md border border-zinc-700 bg-zinc-950 px-2 text-xs font-medium text-zinc-100 focus:outline-none focus:ring-2 focus:ring-sky-300"
-                        >
-                          <option value="claude">Claude</option>
-                          <option value="codex" disabled>
-                            Codex
-                          </option>
-                          <option value="antigravity" disabled>
-                            Antigravity
-                          </option>
-                        </select>
-                        <select
-                          value={modelByProjectId[project.id] ?? DEFAULT_CLAUDE_MODEL}
-                          onChange={(event) =>
-                            selectModel(project.id, event.target.value as ClaudeModelKind)
-                          }
-                          disabled={(agentByProjectId[project.id] ?? "claude") !== "claude"}
-                          title="Model used for this project's next Launch/Resume"
-                          className="h-8 w-full rounded-md border border-zinc-700 bg-zinc-950 px-2 text-xs font-medium text-zinc-100 focus:outline-none focus:ring-2 focus:ring-sky-300 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {CLAUDE_MODEL_OPTIONS.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                        <label className="inline-flex h-8 w-full items-center gap-2 whitespace-nowrap text-xs text-zinc-300">
-                          <input
-                            type="checkbox"
-                            checked={skipPermissionsByProjectId[project.id] ?? false}
-                            onChange={(event) =>
-                              setSkipPermissions(project.id, event.target.checked)
-                            }
-                            className="h-4 w-4 rounded border-zinc-700 bg-zinc-900 text-sky-500 focus:ring-sky-300"
-                          />
-                          <span className="truncate">Skip permissions</span>
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => void launchProject(project)}
-                          className="h-8 w-full rounded-md border border-zinc-700 px-3 text-xs font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
-                        >
-                          {runningProjectIds.has(project.id) ? "Resume" : "Launch"}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={project.lastActivityAt !== null}
-                          title={
-                            project.lastActivityAt !== null
-                              ? "Already started - Intent is only shown for projects that haven't been launched yet"
-                              : undefined
-                          }
-                          onClick={() => openIntent(project)}
-                          className={`h-8 w-full truncate rounded-md border px-3 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-sky-300 ${
-                            project.lastActivityAt !== null
-                              ? "cursor-not-allowed border-zinc-800 text-zinc-500 opacity-60"
-                              : "border-zinc-700 text-zinc-100 hover:border-sky-400 hover:text-sky-200"
-                          }`}
-                        >
-                          Intent
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => openFileMap(project)}
-                          className="h-8 w-full truncate rounded-md border border-zinc-700 px-3 text-xs font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
-                        >
-                          File Map
-                        </button>
-                        <button
-                          type="button"
-                          title="Decision Record"
-                          onClick={() => openDecisionMap(project)}
-                          className="h-8 w-full truncate rounded-md border border-zinc-700 px-3 text-xs font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
-                        >
-                          Decision Record
-                        </button>
-                        <button
-                          type="button"
-                          title="Narrative Journey"
-                          onClick={() => openNarrativeJourney(project)}
-                          className="h-8 w-full truncate rounded-md border border-zinc-700 px-3 text-xs font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
-                        >
-                          Narrative Journey
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => openNotes(project)}
-                          className="col-span-2 flex h-8 w-full items-center justify-center gap-1.5 rounded-md border border-zinc-700 px-3 text-xs font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
-                        >
-                          Notes
-                          {pendingNoteCount(project.noteStatusCounts) > 0 ? (
-                            <span
-                              title={`${pendingNoteCount(project.noteStatusCounts)} note${
-                                pendingNoteCount(project.noteStatusCounts) === 1 ? "" : "s"
-                              } not yet verified`}
-                              className={`flex h-4 min-w-[1rem] items-center justify-center rounded-full px-1 text-[10px] font-semibold ${noteCountBadgeClasses(
-                                pendingNoteCount(project.noteStatusCounts)
-                              )}`}
-                            >
-                              {pendingNoteCount(project.noteStatusCounts)}
+                        }}
+                        className={`cursor-pointer ${
+                          project.ignored ? "text-zinc-500" : "text-zinc-100"
+                        } ${
+                          selectedProject?.path === project.path
+                            ? "bg-sky-500/5 outline outline-1 -outline-offset-1 outline-sky-500/70"
+                            : "hover:bg-zinc-900/60"
+                        }`}
+                      >
+                        <td className="w-56 overflow-hidden border-b border-zinc-900 px-3 py-3">
+                          <div className="min-w-0">
+                            <div className="flex min-w-0 items-center gap-1.5">
+                              <p className="truncate font-medium">{project.name}</p>
+                              {project.hasIntentLedger ? null : (
+                                <span
+                                  title="No intent captured for this project yet"
+                                  className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400"
+                                />
+                              )}
+                            </div>
+                            <p className="mt-1 truncate text-xs text-zinc-500">
+                              {project.path}
+                            </p>
+                            {project.prdSummary ? (
+                              <p
+                                role="button"
+                                tabIndex={0}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  openSummary(project);
+                                }}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter" || event.key === " ") {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    openSummary(project);
+                                  }
+                                }}
+                                className="mt-1 cursor-pointer truncate text-xs text-sky-200 hover:text-sky-100 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                              >
+                                {project.prdSummary}
+                              </p>
+                            ) : null}
+                            {project.projectLogEntry ? (
+                              <p
+                                role="button"
+                                tabIndex={0}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  openProjectLog(project);
+                                }}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter" || event.key === " ") {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    openProjectLog(project);
+                                  }
+                                }}
+                                className="mt-1 cursor-pointer truncate text-xs text-sky-200 hover:text-sky-100 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                              >
+                                {project.projectLogEntry.title}
+                              </p>
+                            ) : null}
+                          </div>
+                        </td>
+                        <td className="w-40 overflow-hidden border-b border-zinc-900 px-3 py-3 text-zinc-300">
+                          {formatLastActivity(project.lastActivityAt)}
+                        </td>
+                        <td className="w-20 overflow-hidden border-b border-zinc-900 px-3 py-3 text-zinc-300">
+                          {formatBytes(project.sizeBytes)}
+                        </td>
+                        <td className="w-32 overflow-hidden border-b border-zinc-900 px-3 py-3">
+                          <ActivityHeatmap days={project.activityHeatmap} />
+                        </td>
+                        <td className="w-24 overflow-hidden border-b border-zinc-900 px-3 py-3">
+                          <div className="flex items-center gap-2">
+                            <StatusDot status={statusByProjectId[project.id] ?? "idle"} />
+                            <span className="text-xs text-zinc-400">
+                              {statusByProjectId[project.id] ?? "idle"}
                             </span>
-                          ) : null}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                          </div>
+                        </td>
+                        <td className="w-32 overflow-hidden border-b border-zinc-900 px-3 py-3">
+                          <HealthBar counts={project.noteStatusCounts} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {selectedProject && detailPanelVisible ? (
+                <ProjectDetailPanel
+                  project={selectedProject}
+                  isRunning={runningProjectIds.has(selectedProject.id)}
+                  agent={agentByProjectId[selectedProject.id] ?? "claude"}
+                  model={modelByProjectId[selectedProject.id] ?? DEFAULT_CLAUDE_MODEL}
+                  skipPermissions={skipPermissionsByProjectId[selectedProject.id] ?? false}
+                  pendingNoteCount={pendingNoteCount(selectedProject.noteStatusCounts)}
+                  onLaunch={() => void launchProject(selectedProject)}
+                  onSelectAgent={(agent) => selectAgent(selectedProject.id, agent)}
+                  onSelectModel={(model) => selectModel(selectedProject.id, model)}
+                  onSetSkipPermissions={(enabled) =>
+                    setSkipPermissions(selectedProject.id, enabled)
+                  }
+                  onOpenIntent={() => openIntent(selectedProject)}
+                  onOpenFileMap={() => openFileMap(selectedProject)}
+                  onOpenDecisionMap={() => openDecisionMap(selectedProject)}
+                  onOpenNarrativeJourney={() => openNarrativeJourney(selectedProject)}
+                  onOpenGitTree={() => openGitTree(selectedProject)}
+                  onOpenInitialPlan={() => openInitialPlan(selectedProject)}
+                  onOpenNotes={() => openNotes(selectedProject)}
+                  onToggleIgnored={() => void setIgnored(selectedProject)}
+                  isTogglingIgnored={busyPath === selectedProject.path}
+                  formatBytes={formatBytes}
+                  formatLastActivity={formatLastActivity}
+                />
+              ) : null}
+            </div>
+          </>
         )}
       </div>
       <ProjectSummaryOverlay
@@ -630,6 +599,14 @@ export const MissionDashboard = ({
       <NarrativeJourneyOverlay
         project={narrativeJourneyProject}
         onClose={() => setNarrativeJourneyProject(null)}
+      />
+      <GitTreeOverlay
+        project={gitTreeProject}
+        onClose={() => setGitTreeProject(null)}
+      />
+      <InitialPlanOverlay
+        project={initialPlanProject}
+        onClose={() => setInitialPlanProject(null)}
       />
       <NotesOverlay
         project={notesProject}
@@ -655,21 +632,6 @@ const applyDashboardState = (
 /** Notes not yet fully verified - the still-open action items for a project. */
 const pendingNoteCount = (counts: MissionProject["noteStatusCounts"]): number =>
   counts.fresh + counts.implemented + counts.tested;
-
-/**
- * Green -> amber -> red "how much is piling up here" signal for pending
- * (not-yet-verified) notes - a verified note doesn't count, so this is
- * specifically an action-item temperature, not a raw note count.
- */
-const noteCountBadgeClasses = (count: number): string => {
-  if (count >= 5) {
-    return "bg-red-500 text-zinc-950";
-  }
-  if (count >= 3) {
-    return "bg-amber-500 text-zinc-950";
-  }
-  return "bg-emerald-500 text-zinc-950";
-};
 
 const formatBytes = (bytes: number | null): string => {
   if (bytes === null) {
@@ -730,34 +692,6 @@ const ActivityHeatmap = ({
     })}
   </div>
 );
-
-/**
- * Per-project build-health strip: how many notes sit at each lifecycle
- * stage (fresh -> implemented -> tested -> verified). A project that's all
- * verified reads as healthy at a glance; one with a pile of fresh/untested
- * notes reads as at-risk, without needing to open the Notes overlay.
- */
-const NoteHealth = ({ counts }: { counts: MissionProject["noteStatusCounts"] }): JSX.Element => {
-  const total = NOTE_STATUS_ORDER.reduce((sum, status) => sum + counts[status], 0);
-  if (total === 0) {
-    return <span className="text-xs text-zinc-600">No notes</span>;
-  }
-
-  return (
-    <div className="flex flex-wrap items-center gap-1">
-      {NOTE_STATUS_ORDER.filter((status) => counts[status] > 0).map((status) => (
-        <span
-          key={status}
-          title={`${counts[status]} ${NOTE_STATUS_META[status].label.toLowerCase()}`}
-          className={`flex h-5 items-center gap-1 rounded-full border px-1.5 text-[10px] font-medium ${NOTE_STATUS_META[status].badgeClass}`}
-        >
-          <span aria-hidden="true">{NOTE_STATUS_META[status].icon}</span>
-          {counts[status]}
-        </span>
-      ))}
-    </div>
-  );
-};
 
 const stringifyError = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);

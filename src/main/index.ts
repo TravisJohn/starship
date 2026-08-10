@@ -10,8 +10,10 @@ import { createStarshipDb, registerIntentHandlers, registerNotesHandlers, type S
 import { registerDecisionMapHandlers } from "./decisionMap";
 import { registerDecisionsExportHandlers } from "./decisionsExport";
 import { registerFileMapHandlers } from "./fileMap";
+import { registerGitTreeHandlers } from "./gitTree";
 import { registerInceptionHandlers } from "./inception";
 import { registerInceptionDiscussHandlers } from "./inceptionDiscuss";
+import { registerInitialPlanHandlers } from "./initialPlan";
 import { registerIntentAnnotationHandlers } from "./intentAnnotation";
 import { registerAppMenu } from "./menu";
 import { registerNarrativeJourneyHandlers } from "./narrativeJourney";
@@ -89,7 +91,9 @@ app.whenReady().then(async () => {
   registerDecisionMapHandlers(db);
   registerDecisionsExportHandlers();
   registerFileMapHandlers(db);
+  registerGitTreeHandlers(db);
   registerIntentHandlers(db);
+  registerInitialPlanHandlers();
   registerIntentAnnotationHandlers(db);
   registerInceptionDiscussHandlers(db);
   registerNarrativeJourneyHandlers(db);

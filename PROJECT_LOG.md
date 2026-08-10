@@ -1,5 +1,85 @@
 # Starship Project Log
 
+## 2026-07-29 — Mission Dashboard styling refresh (branch: feature/dashboard-styling-refresh)
+
+Scoped down from an earlier full-mockup proposal (sidebar nav, tags, search,
+favorites, editable Health Notes, global Activity/Notes views) to a
+styling-only pass on the existing Mission Dashboard - same data, same
+navigation model, no new SQLite tables. Done on its own branch specifically
+so it's a clean revert if it doesn't earn its keep, rather than touching
+`main`.
+
+**What changed:**
+- New `StatTiles.tsx`: Total/Active/Idle/Needs Attention/Ignored counts
+  above the table, derived entirely from data the dashboard already fetches
+  (`statusByProjectId`, `project.ignored`) - no new field.
+- New `HealthBar.tsx`: replaces the old per-status pill strip
+  (`NoteHealth`, now deleted) with one weighted score (fresh=25/
+  implemented=50/tested=75/verified=100, averaged) rendered as a segmented
+  bar + percentage + Excellent/Good/Fair/Needs work label. A project with
+  zero notes still shows "No notes" rather than a fabricated score.
+- New `ProjectDetailPanel.tsx`: the per-row action grid (Launch, File Map,
+  Decision Record, Narrative Journey, Notes, Model & Provider selects, Skip
+  permissions) moved out of an inline 2-column grid duplicated on every
+  table row, into one panel for whichever project is selected. Every
+  handler it calls already took a project/projectId before this change -
+  this only relocates rendering, not the underlying launch/annotate/notes
+  state.
+- Table's Ignore checkbox column removed; ignoring now lives as a text
+  toggle at the bottom of the detail panel.
+
+**Assumptions made (no explicit sign-off needed, but worth surfacing):**
+- Selected project defaults to the first visible row rather than starting
+  with nothing selected, so the panel is never empty on load.
+- If the selected project gets filtered out (e.g. ignored while selected,
+  and "Show ignored" is off), the panel falls back to the new first visible
+  project rather than closing - confirmed live via the verify skill, no
+  crash.
+- Kept the existing Activity heatmap column and the clickable
+  PRD-summary/Project-Log-entry links under the project name unchanged;
+  the mockup that inspired this pass didn't show either, but neither was
+  asked to be cut and both are real existing signal.
+
+**Verified live** via the `verify` skill (Playwright-driven real Electron
+launch against a scratch root of empty throwaway project folders, so no
+real headless `claude -p` call fired): stat tiles render, row click selects
+and highlights, detail panel switches project and fires the same
+File Map/Decision Record/Narrative Journey/Notes/Launch behavior as before,
+health bar renders correctly including the "No notes" case, ignore-toggle
+fallback doesn't crash. Full suite (236 tests) and typecheck both clean
+before the live pass.
+
+**Not done, deliberately out of scope for this pass:** sidebar navigation,
+tags, search, favorites/star, global (cross-project) Activity/Notes views,
+editable Health Notes, the account/workspace chip - all from the original
+mockup, parked as a separate, larger decision if wanted later.
+
+## 2026-07-29 — Git Tree action added (same branch)
+
+New "Git Tree" button in the Project Detail Panel, next to Narrative
+Journey. Shells out to `git log` (reusing the same spawn/resolveGitCommand
+pattern `inception/createProject.ts` already uses for `git init`) and
+renders the commit list with the same self-contained-HTML-with-inline-JS
+pattern as File Map and Decision Record - no headless LLM call involved at
+all, since git already provides structured history data directly.
+
+**Scoping assumption (no explicit sign-off, logged per the "make a
+reasonable call" instruction):** this renders a straight, single-lane
+commit list (plain `git log` on HEAD, most-recent-first) - not a full
+multi-branch graph with lane assignment the way gitk/GitKraken draw one.
+A merge commit still appears and is tagged with its parent count, it just
+isn't drawn as a second visual lane. Real branch-lane layout is a
+meaningfully harder problem than this pass was scoped for; worth a
+dedicated decision later if actually wanted.
+
+Verified live via the `verify` skill against a real temp git repo (two
+commits): commit list renders with hash/subject/author/date/ref badges,
+click-to-detail pane shows full hash and parent list. Also covered with
+real (non-mocked) `generateGitTree` tests against a throwaway temp repo,
+including one exercising an actual `git merge --no-ff` to confirm
+`isMerge`/parent-count detection. Full suite (241 tests, up from 236) and
+typecheck clean.
+
 ## 2026-07-26 — Decision Record rebuild, verification paused
 
 Code complete and committed: accumulation store, supersedes as its own pass, transcript-slice split reverted. Tests passing, typecheck clean.
@@ -520,6 +600,401 @@ amount of "narrate diligently" instruction is a real substitute for that,
 since it's self-reported summary rather than a mechanical ground-truth
 record. No timeline on this - revisit when there's energy for it.
 
+## 2026-08-06 — Fix: project slug dropped `.` and `_`, blanking observation for affected projects
+
+**Reported symptom:** Wise Cow 2.0 showed no live signals, no "last activity",
+and produced nothing on "exit and summarize".
+
+**Root cause.** `slugProjectPath` (`src/main/observation/slug.ts`) reproduced
+Claude Code's `~/.claude/projects/<slug>/` directory naming by replacing only
+`:`, `\`, `/` and space with `-`. The real rule replaces *every* non-ASCII-
+alphanumeric character. Any project whose folder name contained a `.` or `_`
+therefore resolved to a directory that does not exist:
+
+    D:\WEB PROJECTS\Wise Cow 2.0  ->  ...-Wise-Cow-2.0   (computed, missing)
+                                  ->  ...-Wise-Cow-2-0   (real, 2 transcripts)
+
+Two projects on this machine were affected: `Wise Cow 2.0` and `my_portfolio`.
+
+**Why one bug produced all three symptoms.** Everything downstream resolves
+through that one function, and every consumer fails *safe* rather than loud:
+`correlateSession` filters candidate transcripts by the target-directory
+prefix and simply never matches (stays unresolved — no live signals);
+`findAllTranscriptsForProject` swallows the `readdirSync` ENOENT and returns
+`[]` (no last activity); `briefing.ts` reads through `findNewestTranscript`,
+so it had no transcript to summarize. Nothing errored anywhere — the feature
+just went dark for those projects.
+
+**Why it survived Phase 3 verification.** PHASE3_LOG.md recorded the slug as
+"correct — manually computed and matched the real directory name exactly."
+That was true, but was checked against `D:\WEB PROJECTS\starship`, whose name
+contains neither of the two characters that break. Correcting that note.
+
+**Fix.** Rule is now `replace(/[^a-zA-Z0-9]/g, "-")`, verified empirically
+against all 24 real project directories on this machine by comparing each
+transcript's own `cwd` field to its containing directory name — the new rule
+matches all 24, the old rule missed 2. The duplicated copies of the rule in
+`templates/permission-hook.cjs` and `scripts/acceptance-phase3.cjs` were
+updated in lockstep (the hook names the signal files Starship reads back, so
+the pair must agree). No signal files existed on disk, so no old-named data
+was orphaned by the change.
+
+**Decision:** kept one shared `slugProjectPath` rather than splitting it into
+separate "Claude directory" and "our signal file" functions. The two uses are
+genuinely different contracts and a split is defensible, but with no signal
+files to preserve there was nothing to gain, and a silently diverging pair is
+a worse failure mode than the documented duplication.
+
+Regression tests pin the dot, the underscore, and case preservation. Full
+suite 252 passing, typecheck clean.
+
+---
+
+## Intent Ledger: phantom field removed, drift measured
+
+**Removed `learningGoal` from the Intent Ledger surface.** The field was
+collected in the Inception wizard's intent step and rendered into PRD.md via
+`{{learning_goal}}`, but it had no column in `intent_ledger` and therefore no
+downstream reader ever saw it â€” briefing, intent annotation, decision map, and
+narrative journey all read the DB row. Decision: delete rather than wire up.
+
+Touched nine sites across four layers: the wizard field and its Discuss panel
+(`Inception.tsx`), the `IntentInterview` type (`shared/ipc.ts`), the template
+context map (`inception/templates.ts`), the `templates/PRD.md` Â§2 block, the
+cold-prompt assembly (`inception/createProject.ts`), one test fixture, and a
+descriptive clause in each of `prompts/inception-prd.md` and
+`prompts/inception-discuss.md` â€” both prompts told the model the ledger
+"includes learning goal", which would have described a field that no longer
+exists. The template context map and the PRD template had to change together:
+`renderTemplate` reports unfilled placeholders, so editing one alone would
+either dangle a context key or surface a missing placeholder.
+
+`PHASE2_LOG.md` still mentions the field and was deliberately left alone â€” it
+is a historical record of what Phase 2 built, not current documentation.
+Typecheck clean, full suite 252 passing.
+
+**Measured ledger/PRD.md drift before deciding whether to sync them.** Editing
+the ledger in-app updates the SQLite row that feeds every prompt, but never
+rewrites the project's PRD.md Â§2 â€” the human-facing doc. Added
+`scripts/intent-drift.cjs` (`npm run intent:drift`), a strictly read-only
+diagnostic: DB opened `readonly + fileMustExist`, PRD files read-only, no fix
+mode. It runs under Electron-as-Node because `better-sqlite3` is rebuilt
+against Electron's ABI by the postinstall hook.
+
+Similarity uses a token-level Dice coefficient rather than Levenshtein:
+for prose, character distance overstates drift when a sentence is merely
+reordered, while word overlap tracks how much meaning is still shared.
+Unrendered `{{placeholder}}` values are reported as their own state rather
+than scored as 0% â€” "never filled in" is a different problem from "drifted".
+
+**Result across 31 projects:** 28 comparable field pairs, 24 exact, 4 drifted,
+mean similarity 93.1%. Drift is concentrated, not diffuse â€” Bakas accounts for
+three of the four (successCriteria 46.2%, acceptedTradeoffs 30.9%, neverDo
+58.9%) and is the only project whose ledger and PRD were edited on different
+days. Beacon's single drifted field is additive: the PRD has an extra
+paragraph the ledger lacks. No conclusion drawn yet; the sync question is
+still open.
+
+---
+
+## Intent Ledger backfill: dry run says there is nothing to backfill
+
+Investigated backfilling `intent_ledger` rows from PRD.md Â§2 for projects
+lacking one. Added `scripts/intent-backfill-dryrun.cjs`
+(`npm run intent:backfill-dryrun`), read-only with no insert mode at all, which
+imports the Â§2 parser, DB resolution, and project query from
+`intent-drift.cjs` rather than growing a second copy of the label rules
+(`intent-drift.cjs` now exports them and guards `main()` behind
+`require.main === module`).
+
+**Result: 0 of 24 candidates are backfillable.** 18 have no PRD.md on disk;
+6 have a PRD.md that predates the template and carries no Intent Ledger
+section. Not one project has a filled-in Â§2 without a DB row â€” the two
+populations are disjoint. Backfill is not a viable source of ledger data;
+these projects were added to the shelf directly rather than created through
+Inception, so their intent was never captured anywhere.
+
+**Parser defect found and fixed.** `parseIntentSection` matched any heading
+*containing* "intent ledger", so this repo's own PRD matched
+`### Phase 2 â€” Inception & the Intent Ledger` â€” a cross-reference, not a
+section â€” and reported a found-but-empty Â§2 for `starship`. The heading rule is
+now anchored after optional numbering (`## 2. Intent Ledger`), which still
+tolerates renumbering and trailing qualifiers but rejects cross-references.
+Drift totals are unchanged by the fix (28 pairs, 24 exact, 93.1% mean),
+confirming it only corrected the false positive.
+
+Correcting an earlier note in this log's previous entry: the count of projects
+without a ledger row is 24 of 31, not 19.
+
+---
+
+## Session close â€” Intent Ledger cleanup, drift instrumentation, backfill ruled out
+
+Consolidated summary of this session. The two entries above record the work as
+it happened; this entry closes the session and captures two things not logged
+elsewhere â€” the decision to keep the drift diagnostic permanently, and one open
+question carried forward.
+
+**1. `learningGoal` removed.** Nine edits across four layers (wizard field and
+its Discuss panel, `IntentInterview` type, template context map, PRD template
+Â§2, cold-prompt assembly, one test fixture, two prompt templates). The field
+was captured at Inception and rendered into PRD.md but had no `intent_ledger`
+column, so no downstream reader ever saw it â€” a phantom. Typecheck clean,
+252 tests passing. `PHASE2_LOG.md` left untouched as historical record.
+
+**2. `scripts/intent-drift.cjs` â€” kept permanently as a project-health
+metric, not a one-off.** Read-only diagnostic (`npm run intent:drift`)
+comparing each `intent_ledger` row against its project's PRD.md Â§2, scored by
+token-level Dice coefficient. Runs under Electron-as-Node because
+`better-sqlite3` carries Electron's ABI. Treating this as standing
+instrumentation has a consequence worth stating: the Â§2 parser and the label
+vocabulary are now a maintained contract, so changing the PRD template's Â§2
+labels means updating the parser in lockstep, exactly as the removal of
+`{{learning_goal}}` did.
+
+**3. Â§2 heading parser false positive, fixed.** The parser matched any heading
+*containing* "intent ledger", so this repo's own PRD matched
+`### Phase 2 â€” Inception & the Intent Ledger` â€” a cross-reference â€” and
+reported a found-but-empty section for `starship`. Heading matching is now
+anchored after optional numbering. **All previously reported numbers survived
+the fix unchanged: 28 comparable pairs, 24 exact, 4 drifted, 93.1% mean.** The
+rendered output is not identical, and should not be â€” the `starship` row
+correctly changed from "section found" to "no Intent Ledger section". That row
+was the bug; the numbers were never wrong.
+
+**4. Backfill ruled out.** Dry run across the 24 ledger-less projects
+(`npm run intent:backfill-dryrun`, no insert mode) found **0 backfillable**:
+18 have no PRD.md at all, 6 have a PRD.md predating the Â§2 template. There is
+no recoverable intent data in either form. Projects with ledgers and projects
+with a filled Â§2 are the same 7 projects â€” the populations are disjoint,
+because every ledger was written by Inception and nothing else has ever
+written one.
+
+**5. Open decision, carried forward â€” no action taken.** Should projects added
+directly to the shelf (bypassing Inception) get an intent-capture step, or is
+ledger-less-by-design correct for that path? The drift data makes the stakes
+concrete: 24 of 31 projects currently have every headless prompt assembled with
+`intentLedger: null`, so annotation, briefing, decision map, and narrative
+journey all run without intent context for the large majority of the shelf.
+Deferred to a future session.
+
+## 2026-08-07 — Intent Ledger retrofit for existing projects
+
+**Decision, closing the open question above.** The shelf was never meant to be
+a permanent intake path — it is pre-Inception backlog. All new projects go
+through Inception; the shelf gets no intent-capture logic of its own. Instead,
+intent can now be retrofitted onto an already-shelved project on demand,
+reusing Inception's existing intent step rather than adding a parallel flow.
+
+**What changed:**
+- `ProjectDetailPanel.tsx`: the Intent action is no longer disabled once a
+  project has activity. That gate (`project.lastActivityAt !== null`) encoded
+  the assumption that intent is only captured before the first launch, which
+  is exactly the assumption this decision reverses — and it was the one thing
+  actually blocking retrofit, since most shelved projects have prior activity.
+- New `IntentFields.tsx`: the four Intent Ledger questions plus their Discuss
+  threads, extracted from Inception's intent step and now shared with the
+  Intent Ledger editor. The two surfaces previously asked the same four things
+  in different words; the wording lives in one place now. It holds no
+  load/save/validation logic, because the callers' rules genuinely differ —
+  Inception requires all four answers to advance, the editor saves partials.
+- `IntentLedgerEditor.tsx`: uses the shared fields, and shows a "no intent
+  captured yet" empty state framing partial answers as acceptable. Intent
+  reconstructed after the fact is often only partly recoverable, and a
+  half-answered ledger beats none.
+- `hasIntentLedger` added to `MissionProject`, fed by a new batched
+  `db.getProjectIdsWithIntentLedger` (same shape as `getNoteStatusCounts` —
+  one query for the whole shelf, presence only, never the ledger's contents).
+  Surfaced as an amber dot on the shelf row and the Intent button, so "which
+  projects still need this" is answerable without opening each one.
+
+**Deliberately not done:**
+- *Project-aware Discuss.* Discuss stays project-blind: it never inspects the
+  project and helps only from the conversation. Considered and declined —
+  archaeological inference isn't needed for a shelf whose projects the builder
+  already knows the purpose of.
+- *Provenance flag.* Nothing distinguishes a ledger authored at Inception from
+  one retrofitted later. Noted as a possible future column; not added.
+- *Writing intent into project files.* A retrofitted ledger lives in Starship's
+  SQLite only. Unlike Inception, which injects intent into the PRD.md and
+  CLAUDE.md it generates, retrofit never touches an existing project's files —
+  prime directive 1. Consequence, accepted knowingly: retrofitted intent
+  reaches Starship's own briefings and annotations (`briefing.ts` already reads
+  the ledger and tolerates null) but is invisible to Claude Code itself on
+  relaunch, since it is in no file Claude reads and there is no cold prompt on
+  a relaunch. Exporting it into a session is a manual, user-driven step.
+
+**Tests:** 5 new cases in `db.test.ts` covering ledger presence — absent for a
+never-Inception project, present after retrofit, present for a partially
+answered ledger, batched separation of projects with and without, and the
+empty-list case. The test fake gained `projects` and `intent_ledger` support.
+Full suite: 257 passing. The `IntentFields` extraction itself is covered only
+by typecheck — the renderer has no component test infrastructure, and adding
+it was out of scope for this change.
+
+**Verified in the running app** (Playwright Electron driver, throwaway SQLite
+path): 19/19 checks. The Intent action opens on a project with real prior
+activity — the case the old gate blocked; the shelf dot count moved 31 → 30
+after a retrofit with the retrofitted row specifically losing its dot; a
+partial save round-tripped; and Inception's intent step still renders all four
+questions with a Discuss thread each. No headless `claude -p` call fired at any
+point — the editor is a pure DB read/write and Discuss only fires on an
+explicit Send.
+
+## 2026-08-07 — CONTINUITY.md, the cross-agent handoff
+
+**Decision.** Travis is occasionally handing work to Codex or Antigravity
+alongside Claude Code, with Claude Code as orchestrator. `PROJECT_LOG.md`
+stays exactly as-is — full detail, human-readable, for his own learning. A
+separate, deliberately thin artifact carries cross-agent continuity: whichever
+agent just finished writes it at session end, and Travis pastes it as the
+opening message of the next session, whichever tool that is.
+
+**Named `CONTINUITY.md`,** deliberately not `HANDOFF.md` — Wise Cow 2.0
+already carries four hand-written `*_HANDOVER.md` documents (81–449 lines),
+and a one-letter difference from an existing genre of document in the same
+ecosystem is not a name.
+
+**Relationship to `briefing.ts` — sibling in rules, not in mechanism.**
+`prompts/briefing.md`'s altitude rules are near-verbatim what this artifact
+needs and were reused. The pipeline was not: `buildSessionNarrative` reads
+Claude Code's specific JSONL shape, so anything derived from it works only for
+the sessions that need a handoff least. The finishing agent already holds the
+session in context, so it writes the note itself — provider-agnostic by
+construction, no transcript reader, no headless call, and no dependency on the
+Codex observation-pipeline expansion.
+
+**What changed:**
+- New `templates/CONTINUITY.md`: the canonical shape and rules — five
+  sections (`WHERE THIS IS`, `THIS SESSION`, `DECIDED`, `NEVER`, `NEXT`),
+  plain ASCII only, overwrite-never-append.
+- New `AGENTS.md` at the repo root: the same trigger for Codex and
+  Antigravity, pointing at the template. Defers to `CLAUDE.md` on conflict.
+- Travis's global `~/.claude/CLAUDE.md` gained a self-contained version of
+  the directive, so it applies in projects that have no template file.
+
+**Design points worth keeping:**
+- *Overwrite, never append.* This is the structural reason it stays thin, and
+  the one real difference in kind from `PROJECT_LOG.md`. Appending is exactly
+  what turned the existing handover documents into hundreds of lines.
+- *`DECIDED` and `NEVER` stay separate sections.* A reversible design choice
+  and "she must never be in a live, unsupervised conversation with an LLM" are
+  different weight classes; merging them buries the second kind.
+- *Plain ASCII, no em dashes.* This log already contains mojibake from an
+  encoding mismatch. A document crossing three terminals should not carry
+  characters that can do that.
+- *A thin `NEVER` section for a project with no Intent Ledger is correct, not
+  a defect* — and it gives the retrofit capability a concrete trigger: capture
+  intent before handing a shelf project to another agent.
+
+**The five-bullet cap on `DECIDED` was tested against real data, not asserted.**
+Re-running the filter against Wise Cow 2.0's actual source material showed the
+first draft hit five bullets by accident of selection rather than by the rule:
+two of its five were settled *planner* decisions, already built and irrelevant
+to that project's stated NEXT, while several generator-design decisions that
+NEXT genuinely needs had been left out. The cap holds — but only once bullets
+are selected against the stated NEXT specifically, and only because related
+decisions of one kind (a model call's parameters) legitimately group into one
+bullet. Recorded in the template, along with the diagnostic: if five grouped
+bullets still cannot cover the next step, NEXT is too big to be a handoff.
+
+**Wiring decisions, same day:**
+- The Codex trigger is **global** (`~/.codex/AGENTS.md`), not a per-repo copy —
+  same reasoning as the global `~/.claude/CLAUDE.md`: this shouldn't have to be
+  remembered per project. The repo's own `AGENTS.md` was trimmed to stop
+  duplicating the trigger; it now only points at the canonical template and
+  defers to `CLAUDE.md`.
+- **`CONTINUITY.md` is gitignored.** Committing something designed to be
+  overwritten every session works against the overwrite-never-append rule that
+  keeps it thin, and `PROJECT_LOG.md` is already the durable record.
+- **Antigravity: resolved, confirmed, no action required.** Travis checked
+  directly with Antigravity rather than either of us guessing at its
+  convention. It reads *both* a project-root `AGENTS.md` and the global
+  `~/.codex/AGENTS.md`, injecting them as system prompt rules — so the global
+  Codex trigger written above already covers it. No third instruction file,
+  no per-tool variant, and nothing further to wire. All three tools now share
+  one global trigger, which is the outcome the provider-agnostic design was
+  aiming at.
+- **First instance produced** for Starship itself as a live test: 56 lines,
+  3.0 KB, verified pure ASCII at byte level. At the upper end of thin, because
+  this session carried two workstreams; the `DECIDED` cap held at five.
+
+## 2026-08-07 — Prime directive 1 amended, and Starship-side CONTINUITY.md
+
+**Amendment to prime directive 1 — deliberate, dated, approved by Travis.**
+Starship may now write exactly one file into an *existing* project:
+`CONTINUITY.md` at the project root, always overwritten, never read back as a
+source of truth, no other path. Recorded inline in `CLAUDE.md` under the
+directive itself so it can never be mistaken for a silent edit.
+
+Why it was needed: the agent-side trigger cannot fire on the path that needs it
+most. `exitAndSummarize` (`App.tsx:167-193`) kills the pty *first*, deliberately
+— "never make leaving wait on a headless call succeeding" — so the finishing
+agent has no turn left in which to write anything. And in the motivating
+scenario (hitting a usage limit mid-session) the agent may be unable to produce
+anything at all. Asking it via the pty was never an option either: that would be
+a hidden pty write, banned by directive 5.
+
+Scope discipline: this does **not** generalise. Retrofitted Intent Ledgers still
+live in SQLite only, and every other path in a user's project remains
+untouchable. The exception is one named, disposable, machine-owned file.
+
+**What changed:**
+- New `src/main/continuity.ts` — durable-context assembly, deterministic format
+  enforcement, the clobber guard, and the file write. Almost entirely pure
+  functions, so all of it is testable without a headless call.
+- `prompts/briefing.md` now produces **two outputs from one call**:
+  `{summary, continuity}`. One call rather than two because the inputs are
+  identical and the spend is Travis's own subscription; the two artifacts also
+  cannot disagree about what happened if they come from one reading.
+- `briefing.ts` extracts the two **independently**, so a malformed handoff can
+  never cost the builder the briefing he is actually waiting on, or vice versa.
+  Outcome is recorded to the Activity Log as `continuity_written` /
+  `continuity_written_degraded` / `continuity_skipped_agent_authored` /
+  `continuity_failed`, which gives visibility with no UI work.
+
+**Three design decisions worth keeping:**
+- *Durable-source anchoring.* `WHERE THIS IS`, `DECIDED` and `NEVER` are built
+  from the PRD, `PROJECT_LOG.md` and the Intent Ledger — artifacts that survive
+  a session dying mid-thought. Only `THIS SESSION` and `NEXT` depend on the
+  transcript, so degradation is *confined* to them instead of contaminating the
+  whole note. This is the real answer to the token-limit case: Starship cannot
+  detect an abnormal exit from a transcript, so the fix is structural, not
+  detective.
+- *A confidently wrong section is worse than an empty one.* The template's
+  existing "say so plainly" rule covers silence but not truncated-but-plausible
+  work, which a model will summarise as if finished. Degraded notes now mark
+  `THIS SESSION` as incomplete and tell the reader to check `git status`, and
+  `NEXT` returns "Not recorded" rather than inferring one.
+- *Format enforced in code, not asked for.* ASCII folding and the five-bullet
+  `DECIDED` cap run at render time, so a model emitting em dashes or eight
+  bullets still produces a valid document. Same posture as the parser: re-derive
+  rather than trust the response.
+
+**Provenance line doubles as the clobber guard.** `Produced by Starship at
+session exit.` distinguishes machine-derived notes from agent-authored ones. An
+agent's own note from *this* session is preserved rather than overwritten (it
+has reasoning Starship can only infer); a stale one from days ago is replaced.
+The tolerance window exists because a note written as the agent's last act is
+always slightly *older* than the transcript's final write, so a naive
+"newer than the transcript" test would never hold.
+
+**Gitignore is global now** (`core.excludesFile` → `~/.gitignore`), not per-repo.
+Starship writes this file into whichever project a session ended in, so a
+per-repo rule would have meant untracked files appearing across 31 projects —
+or Starship editing more project files to fix a problem it created. Verified
+applying in Wise Cow 2.0, which has no local rule for it.
+
+**Tests:** 39 new cases across `continuity.test.ts` and `briefing.test.ts` —
+ASCII folding and stripping, bullet normalisation, the five-bullet cap at render
+time, empty-section honesty, all four degraded paths, provenance detection, all
+five clobber-guard branches, overwrite-not-append, and independent extraction in
+both directions. Full suite **296 passing**, typecheck clean.
+
+**Not yet done:** the live verification run against a real session is deliberately
+not started — it makes a real `claude -p` call, so it waits on Travis's explicit
+go-ahead per CLAUDE.md's real-headless-run rule.
+
 ## 2026-08-07 — Every headless feature was broken, silently
 
 **Found by the CONTINUITY.md verification run, not by anything failing loudly.**
@@ -578,3 +1053,88 @@ Suite: **305 passing**, typecheck clean.
 at 3.9 KB — larger than either hand-drafted example — because nothing constrains
 *bullet length*. The rules cap sections, bullets and characters, not verbosity.
 See the next entry if a length rule gets added.
+
+## 2026-08-11 — Inception drafts are plain markdown now, and reviewable as markdown
+
+*Logged retroactively during the commit split: the work landed in an earlier
+session and never got an entry. Reconstructed from the code and its comments,
+so it records what changed and why, not the deliberation behind it.*
+
+**The bug.** Inception's PRD and CLAUDE.md drafting prompts asked the model to
+wrap an entire markdown document inside `{"draft": "..."}` JSON. Any model
+writing normal English prose eventually puts a straight quotation mark in a
+sentence, and that produces invalid JSON. The response then fell through to the
+raw-text path still carrying the literal `{"draft":"...` envelope and escaped
+`\n` sequences — which got written to `PRD.md` and `CLAUDE.md` on disk. The
+failure was silent and scaled with how well the model wrote.
+
+**Fix: stop asking for the envelope.** Both prompts now ask for the complete
+document as plain markdown, explicitly no JSON, no code fence, no preamble, and
+say outright that quotation marks and other punctuation need no escaping. A
+document is not structured data and there was never anything to gain by
+transporting it as if it were. Discuss and the briefing pass still return JSON,
+because those genuinely carry fields.
+
+**Review step shows markdown as markdown.** The Inception review screen rendered
+both drafts in a monospace textarea, which is the wrong altitude for a document
+whose whole job is to be read as prose. Each draft now has a Preview/Edit toggle,
+defaulting to Preview; Edit is the same textarea as before. Rendering goes
+through a new `MarkdownView` component with an explicit component map rather
+than a typography plugin, so heading, list, table and code styling stays owned
+by this codebase.
+
+Adds `react-markdown` and `remark-gfm` — 103 packages in the lockfile, all from
+that one dependency tree.
+
+Covered by a regression test asserting that prose containing straight quotes
+comes back verbatim and unwrapped.
+
+## 2026-08-11 — Initial Plan: read back the plan Claude actually proposed
+
+*Logged retroactively during the commit split, same as the entry above.*
+
+A new action in the project detail panel shows the plan Claude proposed in its
+first substantive reply after the cold prompt — the shape of the work as it was
+originally framed, which is the thing worth comparing against when a project has
+drifted.
+
+**Deterministic, not generated.** It scans the project's oldest transcript in
+order for the first assistant turn that actually said something (skipping turns
+that were pure `tool_use`) and returns that text verbatim. No headless call, no
+summarization, no cost — the data is already local and reading it back is a file
+scan. It stops at the first such turn deliberately: later turns are follow-up
+work, not the plan.
+
+**Why the shape is reliable enough to read back.** Starship's own cold prompt
+(`composeColdPrompt`) explicitly asks for a Phase 1 plan with discrete tasks and
+dependencies, the largest risk flagged, and a wait for approval. So this reads
+back a shape Starship itself elicited rather than guessing that the first reply
+happens to be a plan.
+
+Rendered through the same `MarkdownView` the Inception review uses, so the plan
+reads as prose rather than as a transcript dump. Projects with no transcript, an
+unreadable one, or no text-bearing assistant turn return nothing and the overlay
+says so, rather than showing an empty frame.
+
+## 2026-08-11 — Notes panel and dashboard detail panel can both be hidden
+
+*Logged retroactively during the commit split, same as the two entries above.*
+
+Two surfaces that were permanently on screen are now toggleable. Neither
+changes any data or behaviour — this is purely about reclaiming width.
+
+**Notes panel (Build Room).** The dev sidebar sat beside the terminal at all
+times, squeezing the pane the builder is actually reading. It now toggles from
+View > Notes Panel, a checkbox that reflects current state and is enabled only
+while the terminal panel is showing, since it means nothing on the File Map or
+Kanban panels. Visibility is tracked per project rather than globally: sessions
+are per project and a shared flag would leak one project's layout into another.
+It resets to visible on launch and its entry is dropped when the session closes,
+so nothing accumulates across sessions.
+
+**Detail panel (Mission Dashboard).** A Hide/Show Details button collapses the
+per-project action panel, giving the project table the full width. Selection is
+unaffected — hiding the panel does not deselect, so showing it again returns to
+the same project.
+
+Both default to visible, so nothing changes for anyone who never touches them.

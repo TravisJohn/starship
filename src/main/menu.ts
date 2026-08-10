@@ -24,7 +24,8 @@ export const registerAppMenu = (
   let sessionState: MenuSessionState = {
     active: false,
     projectName: null,
-    panel: "terminal"
+    panel: "terminal",
+    devSidebarVisible: true
   };
 
   const sendAction = (action: MenuAction): void => {
@@ -74,6 +75,14 @@ export const registerAppMenu = (
         label: "View",
         submenu: [
           ...panelItems,
+          { type: "separator" },
+          {
+            label: "Notes Panel",
+            type: "checkbox",
+            checked: sessionState.devSidebarVisible,
+            enabled: sessionEnabled && sessionState.panel === "terminal",
+            click: () => sendAction({ type: "toggleDevSidebar" })
+          },
           { type: "separator" },
           { label: "Reload", role: "reload" }
         ]

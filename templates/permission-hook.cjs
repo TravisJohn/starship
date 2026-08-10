@@ -16,7 +16,10 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const slugProjectPath = (absoluteProjectPath) => absoluteProjectPath.replace(/[:\\/ ]/g, "-");
+// Keep in sync with src/main/observation/slug.ts - Starship reads the signal
+// file back under the name this produces.
+const slugProjectPath = (absoluteProjectPath) =>
+  absoluteProjectPath.replace(/[^a-zA-Z0-9]/g, "-");
 
 const resolveSignalsDir = () => {
   if (process.env.STARSHIP_SIGNALS_DIR) {

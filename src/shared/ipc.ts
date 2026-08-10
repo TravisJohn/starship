@@ -18,6 +18,12 @@ export type Project = {
 
 export type MissionProject = Project & {
   ignored: boolean;
+  /**
+   * Whether an Intent Ledger has been captured for this project - presence
+   * only, never its contents. Projects created through Inception always have
+   * one; shelved projects only have one if intent was retrofitted onto them.
+   */
+  hasIntentLedger: boolean;
   lastActivityAt: string | null;
   prdSummary: string | null;
   projectLogEntry: ProjectLogEntry | null;
@@ -39,6 +45,15 @@ export type ProjectLogEntry = {
 
 export type ProjectPhasesRequest = {
   projectPath: string;
+};
+
+export type InitialPlanRequest = {
+  projectPath: string;
+};
+
+export type InitialPlanResult = {
+  markdown: string | null;
+  capturedAt: string | null;
 };
 
 export type MissionDashboardState = {
@@ -189,6 +204,44 @@ export type FileMapDownloadResponse = {
   savedPath: string | null;
 };
 
+export type GitCommitEntry = {
+  hash: string;
+  shortHash: string;
+  parents: string[];
+  author: string;
+  date: string;
+  refs: string[];
+  subject: string;
+  isMerge: boolean;
+};
+
+export type GitTreeResult = {
+  commits: GitCommitEntry[];
+  generatedAt: string;
+  notARepo: boolean;
+};
+
+export type GitTreeGenerateRequest = {
+  projectId: ProjectId;
+  projectPath: string;
+};
+
+export type GitTreeGenerateResponse = {
+  html: string;
+  commitCount: number;
+  generatedAt: string;
+  notARepo: boolean;
+};
+
+export type GitTreeDownloadRequest = {
+  html: string;
+  projectName: string;
+};
+
+export type GitTreeDownloadResponse = {
+  savedPath: string | null;
+};
+
 export type ProjectLogSummarizeRequest = {
   title: string;
   body: string;
@@ -216,7 +269,6 @@ export type IntentInterview = {
   successCriteria: string;
   acceptedTradeoffs: string;
   neverDo: string;
-  learningGoal: string;
 };
 
 export type RequirementsInterview = {
@@ -559,13 +611,15 @@ export type MenuSessionState = {
   active: boolean;
   projectName: string | null;
   panel: ActiveSessionPanel;
+  devSidebarVisible: boolean;
 };
 
 export type MenuAction =
   | { type: "setPanel"; panel: ActiveSessionPanel }
   | { type: "backToDashboard" }
   | { type: "closeSession" }
-  | { type: "exitAndSummarize" };
+  | { type: "exitAndSummarize" }
+  | { type: "toggleDevSidebar" };
 
 export type RendererToMainInvokeMap = {
   "pty:spawn": {
@@ -616,6 +670,10 @@ export type RendererToMainInvokeMap = {
     request: ProjectPhasesRequest;
     response: PrdPhase[];
   };
+  "project:getInitialPlan": {
+    request: InitialPlanRequest;
+    response: InitialPlanResult;
+  };
   "briefing:generate": {
     request: BriefingGenerateRequest;
     response: SessionBriefing;
@@ -635,6 +693,14 @@ export type RendererToMainInvokeMap = {
   "fileMap:download": {
     request: FileMapDownloadRequest;
     response: FileMapDownloadResponse;
+  };
+  "gitTree:generate": {
+    request: GitTreeGenerateRequest;
+    response: GitTreeGenerateResponse;
+  };
+  "gitTree:download": {
+    request: GitTreeDownloadRequest;
+    response: GitTreeDownloadResponse;
   };
   "decisionMap:generate": {
     request: DecisionMapGenerateRequest;
@@ -771,6 +837,7 @@ export type StarshipApi = {
   };
   project: {
     getPhases: (request: ProjectPhasesRequest) => Promise<PrdPhase[]>;
+    getInitialPlan: (request: InitialPlanRequest) => Promise<InitialPlanResult>;
   };
   briefing: {
     generate: (request: BriefingGenerateRequest) => Promise<SessionBriefing>;
@@ -780,6 +847,10 @@ export type StarshipApi = {
   fileMap: {
     generate: (request: FileMapGenerateRequest) => Promise<FileMapGenerateResponse>;
     download: (request: FileMapDownloadRequest) => Promise<FileMapDownloadResponse>;
+  };
+  gitTree: {
+    generate: (request: GitTreeGenerateRequest) => Promise<GitTreeGenerateResponse>;
+    download: (request: GitTreeDownloadRequest) => Promise<GitTreeDownloadResponse>;
   };
   decisionMap: {
     generate: (request: DecisionMapGenerateRequest) => Promise<DecisionMapGenerateResponse>;

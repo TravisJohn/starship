@@ -126,7 +126,6 @@ const buildTemplateContext = (
     success_criteria: intent.successCriteria,
     accepted_tradeoffs: intent.acceptedTradeoffs,
     never_do: intent.neverDo,
-    learning_goal: intent.learningGoal,
     problem_statement: intent.purpose,
     audience: requirements.audience,
     goals: firstVersionGoals,
