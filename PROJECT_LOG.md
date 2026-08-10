@@ -841,6 +841,160 @@ questions with a Discuss thread each. No headless `claude -p` call fired at any
 point — the editor is a pure DB read/write and Discuss only fires on an
 explicit Send.
 
+## 2026-08-07 — CONTINUITY.md, the cross-agent handoff
+
+**Decision.** Travis is occasionally handing work to Codex or Antigravity
+alongside Claude Code, with Claude Code as orchestrator. `PROJECT_LOG.md`
+stays exactly as-is — full detail, human-readable, for his own learning. A
+separate, deliberately thin artifact carries cross-agent continuity: whichever
+agent just finished writes it at session end, and Travis pastes it as the
+opening message of the next session, whichever tool that is.
+
+**Named `CONTINUITY.md`,** deliberately not `HANDOFF.md` — Wise Cow 2.0
+already carries four hand-written `*_HANDOVER.md` documents (81–449 lines),
+and a one-letter difference from an existing genre of document in the same
+ecosystem is not a name.
+
+**Relationship to `briefing.ts` — sibling in rules, not in mechanism.**
+`prompts/briefing.md`'s altitude rules are near-verbatim what this artifact
+needs and were reused. The pipeline was not: `buildSessionNarrative` reads
+Claude Code's specific JSONL shape, so anything derived from it works only for
+the sessions that need a handoff least. The finishing agent already holds the
+session in context, so it writes the note itself — provider-agnostic by
+construction, no transcript reader, no headless call, and no dependency on the
+Codex observation-pipeline expansion.
+
+**What changed:**
+- New `templates/CONTINUITY.md`: the canonical shape and rules — five
+  sections (`WHERE THIS IS`, `THIS SESSION`, `DECIDED`, `NEVER`, `NEXT`),
+  plain ASCII only, overwrite-never-append.
+- New `AGENTS.md` at the repo root: the same trigger for Codex and
+  Antigravity, pointing at the template. Defers to `CLAUDE.md` on conflict.
+- Travis's global `~/.claude/CLAUDE.md` gained a self-contained version of
+  the directive, so it applies in projects that have no template file.
+
+**Design points worth keeping:**
+- *Overwrite, never append.* This is the structural reason it stays thin, and
+  the one real difference in kind from `PROJECT_LOG.md`. Appending is exactly
+  what turned the existing handover documents into hundreds of lines.
+- *`DECIDED` and `NEVER` stay separate sections.* A reversible design choice
+  and "she must never be in a live, unsupervised conversation with an LLM" are
+  different weight classes; merging them buries the second kind.
+- *Plain ASCII, no em dashes.* This log already contains mojibake from an
+  encoding mismatch. A document crossing three terminals should not carry
+  characters that can do that.
+- *A thin `NEVER` section for a project with no Intent Ledger is correct, not
+  a defect* — and it gives the retrofit capability a concrete trigger: capture
+  intent before handing a shelf project to another agent.
+
+**The five-bullet cap on `DECIDED` was tested against real data, not asserted.**
+Re-running the filter against Wise Cow 2.0's actual source material showed the
+first draft hit five bullets by accident of selection rather than by the rule:
+two of its five were settled *planner* decisions, already built and irrelevant
+to that project's stated NEXT, while several generator-design decisions that
+NEXT genuinely needs had been left out. The cap holds — but only once bullets
+are selected against the stated NEXT specifically, and only because related
+decisions of one kind (a model call's parameters) legitimately group into one
+bullet. Recorded in the template, along with the diagnostic: if five grouped
+bullets still cannot cover the next step, NEXT is too big to be a handoff.
+
+**Wiring decisions, same day:**
+- The Codex trigger is **global** (`~/.codex/AGENTS.md`), not a per-repo copy —
+  same reasoning as the global `~/.claude/CLAUDE.md`: this shouldn't have to be
+  remembered per project. The repo's own `AGENTS.md` was trimmed to stop
+  duplicating the trigger; it now only points at the canonical template and
+  defers to `CLAUDE.md`.
+- **`CONTINUITY.md` is gitignored.** Committing something designed to be
+  overwritten every session works against the overwrite-never-append rule that
+  keeps it thin, and `PROJECT_LOG.md` is already the durable record.
+- **Antigravity: resolved, confirmed, no action required.** Travis checked
+  directly with Antigravity rather than either of us guessing at its
+  convention. It reads *both* a project-root `AGENTS.md` and the global
+  `~/.codex/AGENTS.md`, injecting them as system prompt rules — so the global
+  Codex trigger written above already covers it. No third instruction file,
+  no per-tool variant, and nothing further to wire. All three tools now share
+  one global trigger, which is the outcome the provider-agnostic design was
+  aiming at.
+- **First instance produced** for Starship itself as a live test: 56 lines,
+  3.0 KB, verified pure ASCII at byte level. At the upper end of thin, because
+  this session carried two workstreams; the `DECIDED` cap held at five.
+
+## 2026-08-07 — Prime directive 1 amended, and Starship-side CONTINUITY.md
+
+**Amendment to prime directive 1 — deliberate, dated, approved by Travis.**
+Starship may now write exactly one file into an *existing* project:
+`CONTINUITY.md` at the project root, always overwritten, never read back as a
+source of truth, no other path. Recorded inline in `CLAUDE.md` under the
+directive itself so it can never be mistaken for a silent edit.
+
+Why it was needed: the agent-side trigger cannot fire on the path that needs it
+most. `exitAndSummarize` (`App.tsx:167-193`) kills the pty *first*, deliberately
+— "never make leaving wait on a headless call succeeding" — so the finishing
+agent has no turn left in which to write anything. And in the motivating
+scenario (hitting a usage limit mid-session) the agent may be unable to produce
+anything at all. Asking it via the pty was never an option either: that would be
+a hidden pty write, banned by directive 5.
+
+Scope discipline: this does **not** generalise. Retrofitted Intent Ledgers still
+live in SQLite only, and every other path in a user's project remains
+untouchable. The exception is one named, disposable, machine-owned file.
+
+**What changed:**
+- New `src/main/continuity.ts` — durable-context assembly, deterministic format
+  enforcement, the clobber guard, and the file write. Almost entirely pure
+  functions, so all of it is testable without a headless call.
+- `prompts/briefing.md` now produces **two outputs from one call**:
+  `{summary, continuity}`. One call rather than two because the inputs are
+  identical and the spend is Travis's own subscription; the two artifacts also
+  cannot disagree about what happened if they come from one reading.
+- `briefing.ts` extracts the two **independently**, so a malformed handoff can
+  never cost the builder the briefing he is actually waiting on, or vice versa.
+  Outcome is recorded to the Activity Log as `continuity_written` /
+  `continuity_written_degraded` / `continuity_skipped_agent_authored` /
+  `continuity_failed`, which gives visibility with no UI work.
+
+**Three design decisions worth keeping:**
+- *Durable-source anchoring.* `WHERE THIS IS`, `DECIDED` and `NEVER` are built
+  from the PRD, `PROJECT_LOG.md` and the Intent Ledger — artifacts that survive
+  a session dying mid-thought. Only `THIS SESSION` and `NEXT` depend on the
+  transcript, so degradation is *confined* to them instead of contaminating the
+  whole note. This is the real answer to the token-limit case: Starship cannot
+  detect an abnormal exit from a transcript, so the fix is structural, not
+  detective.
+- *A confidently wrong section is worse than an empty one.* The template's
+  existing "say so plainly" rule covers silence but not truncated-but-plausible
+  work, which a model will summarise as if finished. Degraded notes now mark
+  `THIS SESSION` as incomplete and tell the reader to check `git status`, and
+  `NEXT` returns "Not recorded" rather than inferring one.
+- *Format enforced in code, not asked for.* ASCII folding and the five-bullet
+  `DECIDED` cap run at render time, so a model emitting em dashes or eight
+  bullets still produces a valid document. Same posture as the parser: re-derive
+  rather than trust the response.
+
+**Provenance line doubles as the clobber guard.** `Produced by Starship at
+session exit.` distinguishes machine-derived notes from agent-authored ones. An
+agent's own note from *this* session is preserved rather than overwritten (it
+has reasoning Starship can only infer); a stale one from days ago is replaced.
+The tolerance window exists because a note written as the agent's last act is
+always slightly *older* than the transcript's final write, so a naive
+"newer than the transcript" test would never hold.
+
+**Gitignore is global now** (`core.excludesFile` → `~/.gitignore`), not per-repo.
+Starship writes this file into whichever project a session ended in, so a
+per-repo rule would have meant untracked files appearing across 31 projects —
+or Starship editing more project files to fix a problem it created. Verified
+applying in Wise Cow 2.0, which has no local rule for it.
+
+**Tests:** 39 new cases across `continuity.test.ts` and `briefing.test.ts` —
+ASCII folding and stripping, bullet normalisation, the five-bullet cap at render
+time, empty-section honesty, all four degraded paths, provenance detection, all
+five clobber-guard branches, overwrite-not-append, and independent extraction in
+both directions. Full suite **296 passing**, typecheck clean.
+
+**Not yet done:** the live verification run against a real session is deliberately
+not started — it makes a real `claude -p` call, so it waits on Travis's explicit
+go-ahead per CLAUDE.md's real-headless-run rule.
+
 ## 2026-08-07 — Every headless feature was broken, silently
 
 **Found by the CONTINUITY.md verification run, not by anything failing loudly.**

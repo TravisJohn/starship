@@ -5,3 +5,16 @@ release/
 .tmp-*.log
 acceptance-output/
 .claude/scheduled_tasks.lock
+
+# Rewritten from scratch at the end of every session - disposable by design.
+# PROJECT_LOG.md is the durable record; committing this would work against
+# the overwrite-never-append rule that keeps it thin.
+# Root-anchored on purpose: unanchored, this also swallows
+# templates/CONTINUITY.md, which is the canonical template AGENTS.md tells
+# every agent to read before writing one.
+/CONTINUITY.md
+
+# The global gitignore carries an unanchored CONTINUITY.md rule, which would
+# hide the template in every repo. This repo owns that template, so it has to
+# say so explicitly.
+!templates/CONTINUITY.md

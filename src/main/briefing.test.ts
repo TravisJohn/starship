@@ -8,7 +8,7 @@ vi.mock("electron", () => ({
   ipcMain: { handle: vi.fn() }
 }));
 
-import { buildSessionNarrative } from "./briefing";
+import { buildSessionNarrative, extractContinuity, extractSummary } from "./briefing";
 
 let tempDir: string;
 let transcriptPath: string;
@@ -120,5 +120,89 @@ describe("buildSessionNarrative", () => {
     expect(narrative.length).toBeLessThanOrEqual(12000);
     expect(narrative).toContain("message number 1999");
     expect(narrative).not.toContain("message number 0\n");
+  });
+});
+
+describe("extractContinuity", () => {
+  const wellFormed = JSON.stringify({
+    summary: "Dropped the legacy tables.",
+    continuity: {
+      whereThisIs: "The systems model is live.",
+      thisSession: ["Dropped four legacy tables."],
+      decided: ["Sonnet writes the story in one call."],
+      never: ["Never a live unsupervised LLM."],
+      next: "Design the story generator."
+    }
+  });
+
+  it("extracts all five sections from a well-formed response", () => {
+    expect(extractContinuity(wellFormed)).toEqual({
+      whereThisIs: "The systems model is live.",
+      thisSession: ["Dropped four legacy tables."],
+      decided: ["Sonnet writes the story in one call."],
+      never: ["Never a live unsupervised LLM."],
+      next: "Design the story generator."
+    });
+  });
+
+  it("reads through a fenced code block, which the model sometimes wraps its JSON in", () => {
+    expect(extractContinuity("```json\n" + wellFormed + "\n```")).not.toBeNull();
+  });
+
+  it("returns null when the handoff block is missing entirely", () => {
+    expect(extractContinuity(JSON.stringify({ summary: "just a briefing" }))).toBeNull();
+  });
+
+  it("returns null rather than a partial handoff when a required section is absent", () => {
+    const missingNext = JSON.stringify({
+      continuity: { whereThisIs: "somewhere", thisSession: [], decided: [], never: [] }
+    });
+
+    expect(extractContinuity(missingNext)).toBeNull();
+  });
+
+  it("drops non-string list entries instead of letting them reach the document", () => {
+    const dirty = JSON.stringify({
+      continuity: {
+        whereThisIs: "here",
+        thisSession: ["real", 42, null, { nested: true }],
+        decided: "not an array",
+        never: [],
+        next: "onwards"
+      }
+    });
+
+    expect(extractContinuity(dirty)).toMatchObject({
+      thisSession: ["real"],
+      decided: []
+    });
+  });
+
+  it("returns null on unparseable output rather than throwing into the exit flow", () => {
+    expect(extractContinuity("the model just said words")).toBeNull();
+  });
+});
+
+describe("extractSummary and extractContinuity are independent", () => {
+  it("still yields the briefing when the handoff block is malformed", () => {
+    const raw = JSON.stringify({ summary: "The briefing survived.", continuity: "not an object" });
+
+    expect(extractSummary(raw)).toBe("The briefing survived.");
+    expect(extractContinuity(raw)).toBeNull();
+  });
+
+  it("still yields the handoff when the briefing text is missing", () => {
+    const raw = JSON.stringify({
+      continuity: {
+        whereThisIs: "here",
+        thisSession: [],
+        decided: [],
+        never: [],
+        next: "onwards"
+      }
+    });
+
+    expect(extractSummary(raw)).toBeNull();
+    expect(extractContinuity(raw)).not.toBeNull();
   });
 });
