@@ -647,6 +647,137 @@ a worse failure mode than the documented duplication.
 
 Regression tests pin the dot, the underscore, and case preservation. Full
 suite 252 passing, typecheck clean.
+
+---
+
+## Intent Ledger: phantom field removed, drift measured
+
+**Removed `learningGoal` from the Intent Ledger surface.** The field was
+collected in the Inception wizard's intent step and rendered into PRD.md via
+`{{learning_goal}}`, but it had no column in `intent_ledger` and therefore no
+downstream reader ever saw it â€” briefing, intent annotation, decision map, and
+narrative journey all read the DB row. Decision: delete rather than wire up.
+
+Touched nine sites across four layers: the wizard field and its Discuss panel
+(`Inception.tsx`), the `IntentInterview` type (`shared/ipc.ts`), the template
+context map (`inception/templates.ts`), the `templates/PRD.md` Â§2 block, the
+cold-prompt assembly (`inception/createProject.ts`), one test fixture, and a
+descriptive clause in each of `prompts/inception-prd.md` and
+`prompts/inception-discuss.md` â€” both prompts told the model the ledger
+"includes learning goal", which would have described a field that no longer
+exists. The template context map and the PRD template had to change together:
+`renderTemplate` reports unfilled placeholders, so editing one alone would
+either dangle a context key or surface a missing placeholder.
+
+`PHASE2_LOG.md` still mentions the field and was deliberately left alone â€” it
+is a historical record of what Phase 2 built, not current documentation.
+Typecheck clean, full suite 252 passing.
+
+**Measured ledger/PRD.md drift before deciding whether to sync them.** Editing
+the ledger in-app updates the SQLite row that feeds every prompt, but never
+rewrites the project's PRD.md Â§2 â€” the human-facing doc. Added
+`scripts/intent-drift.cjs` (`npm run intent:drift`), a strictly read-only
+diagnostic: DB opened `readonly + fileMustExist`, PRD files read-only, no fix
+mode. It runs under Electron-as-Node because `better-sqlite3` is rebuilt
+against Electron's ABI by the postinstall hook.
+
+Similarity uses a token-level Dice coefficient rather than Levenshtein:
+for prose, character distance overstates drift when a sentence is merely
+reordered, while word overlap tracks how much meaning is still shared.
+Unrendered `{{placeholder}}` values are reported as their own state rather
+than scored as 0% â€” "never filled in" is a different problem from "drifted".
+
+**Result across 31 projects:** 28 comparable field pairs, 24 exact, 4 drifted,
+mean similarity 93.1%. Drift is concentrated, not diffuse â€” Bakas accounts for
+three of the four (successCriteria 46.2%, acceptedTradeoffs 30.9%, neverDo
+58.9%) and is the only project whose ledger and PRD were edited on different
+days. Beacon's single drifted field is additive: the PRD has an extra
+paragraph the ledger lacks. No conclusion drawn yet; the sync question is
+still open.
+
+---
+
+## Intent Ledger backfill: dry run says there is nothing to backfill
+
+Investigated backfilling `intent_ledger` rows from PRD.md Â§2 for projects
+lacking one. Added `scripts/intent-backfill-dryrun.cjs`
+(`npm run intent:backfill-dryrun`), read-only with no insert mode at all, which
+imports the Â§2 parser, DB resolution, and project query from
+`intent-drift.cjs` rather than growing a second copy of the label rules
+(`intent-drift.cjs` now exports them and guards `main()` behind
+`require.main === module`).
+
+**Result: 0 of 24 candidates are backfillable.** 18 have no PRD.md on disk;
+6 have a PRD.md that predates the template and carries no Intent Ledger
+section. Not one project has a filled-in Â§2 without a DB row â€” the two
+populations are disjoint. Backfill is not a viable source of ledger data;
+these projects were added to the shelf directly rather than created through
+Inception, so their intent was never captured anywhere.
+
+**Parser defect found and fixed.** `parseIntentSection` matched any heading
+*containing* "intent ledger", so this repo's own PRD matched
+`### Phase 2 â€” Inception & the Intent Ledger` â€” a cross-reference, not a
+section â€” and reported a found-but-empty Â§2 for `starship`. The heading rule is
+now anchored after optional numbering (`## 2. Intent Ledger`), which still
+tolerates renumbering and trailing qualifiers but rejects cross-references.
+Drift totals are unchanged by the fix (28 pairs, 24 exact, 93.1% mean),
+confirming it only corrected the false positive.
+
+Correcting an earlier note in this log's previous entry: the count of projects
+without a ledger row is 24 of 31, not 19.
+
+---
+
+## Session close â€” Intent Ledger cleanup, drift instrumentation, backfill ruled out
+
+Consolidated summary of this session. The two entries above record the work as
+it happened; this entry closes the session and captures two things not logged
+elsewhere â€” the decision to keep the drift diagnostic permanently, and one open
+question carried forward.
+
+**1. `learningGoal` removed.** Nine edits across four layers (wizard field and
+its Discuss panel, `IntentInterview` type, template context map, PRD template
+Â§2, cold-prompt assembly, one test fixture, two prompt templates). The field
+was captured at Inception and rendered into PRD.md but had no `intent_ledger`
+column, so no downstream reader ever saw it â€” a phantom. Typecheck clean,
+252 tests passing. `PHASE2_LOG.md` left untouched as historical record.
+
+**2. `scripts/intent-drift.cjs` â€” kept permanently as a project-health
+metric, not a one-off.** Read-only diagnostic (`npm run intent:drift`)
+comparing each `intent_ledger` row against its project's PRD.md Â§2, scored by
+token-level Dice coefficient. Runs under Electron-as-Node because
+`better-sqlite3` carries Electron's ABI. Treating this as standing
+instrumentation has a consequence worth stating: the Â§2 parser and the label
+vocabulary are now a maintained contract, so changing the PRD template's Â§2
+labels means updating the parser in lockstep, exactly as the removal of
+`{{learning_goal}}` did.
+
+**3. Â§2 heading parser false positive, fixed.** The parser matched any heading
+*containing* "intent ledger", so this repo's own PRD matched
+`### Phase 2 â€” Inception & the Intent Ledger` â€” a cross-reference â€” and
+reported a found-but-empty section for `starship`. Heading matching is now
+anchored after optional numbering. **All previously reported numbers survived
+the fix unchanged: 28 comparable pairs, 24 exact, 4 drifted, 93.1% mean.** The
+rendered output is not identical, and should not be â€” the `starship` row
+correctly changed from "section found" to "no Intent Ledger section". That row
+was the bug; the numbers were never wrong.
+
+**4. Backfill ruled out.** Dry run across the 24 ledger-less projects
+(`npm run intent:backfill-dryrun`, no insert mode) found **0 backfillable**:
+18 have no PRD.md at all, 6 have a PRD.md predating the Â§2 template. There is
+no recoverable intent data in either form. Projects with ledgers and projects
+with a filled Â§2 are the same 7 projects â€” the populations are disjoint,
+because every ledger was written by Inception and nothing else has ever
+written one.
+
+**5. Open decision, carried forward â€” no action taken.** Should projects added
+directly to the shelf (bypassing Inception) get an intent-capture step, or is
+ledger-less-by-design correct for that path? The drift data makes the stakes
+concrete: 24 of 31 projects currently have every headless prompt assembled with
+`intentLedger: null`, so annotation, briefing, decision map, and narrative
+journey all run without intent context for the large majority of the shelf.
+Deferred to a future session.
+
 ## 2026-08-07 — Every headless feature was broken, silently
 
 **Found by the CONTINUITY.md verification run, not by anything failing loudly.**

@@ -5,6 +5,7 @@ import type {
   RequirementsInterview
 } from "../../shared/ipc";
 import { DiscussPanel } from "./DiscussPanel";
+import { IntentFields } from "./IntentFields";
 
 type InceptionProps = {
   rootPath: string | null;
@@ -17,8 +18,7 @@ const emptyIntent: IntentInterview = {
   purpose: "",
   successCriteria: "",
   acceptedTradeoffs: "",
-  neverDo: "",
-  learningGoal: ""
+  neverDo: ""
 };
 
 const emptyRequirements: RequirementsInterview = {
@@ -137,10 +137,6 @@ const IntentStep = ({
   onNext,
   canContinue
 }: IntentStepProps): JSX.Element => {
-  const setField = (field: keyof IntentInterview, value: string): void => {
-    onChange({ ...intent, [field]: value });
-  };
-
   return (
     <div className="mx-auto grid w-full max-w-5xl grid-cols-1 gap-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
       <div className="pt-1">
@@ -165,76 +161,7 @@ const IntentStep = ({
           }
         }}
       >
-        <div>
-          <TextArea
-            label="Why should this project exist?"
-            value={intent.purpose}
-            onChange={(value) => setField("purpose", value)}
-            minRows={4}
-          />
-          <DiscussPanel
-            field="purpose"
-            fieldLabel="Why should this project exist?"
-            currentValue={intent.purpose}
-            onApply={(value) => setField("purpose", value)}
-          />
-        </div>
-        <div>
-          <TextArea
-            label="What would make this project successful enough to call it real?"
-            value={intent.successCriteria}
-            onChange={(value) => setField("successCriteria", value)}
-            minRows={4}
-          />
-          <DiscussPanel
-            field="successCriteria"
-            fieldLabel="What would make this project successful enough to call it real?"
-            currentValue={intent.successCriteria}
-            onApply={(value) => setField("successCriteria", value)}
-          />
-        </div>
-        <div>
-          <TextArea
-            label="What tradeoffs are you already willing to accept?"
-            value={intent.acceptedTradeoffs}
-            onChange={(value) => setField("acceptedTradeoffs", value)}
-            minRows={4}
-          />
-          <DiscussPanel
-            field="acceptedTradeoffs"
-            fieldLabel="What tradeoffs are you already willing to accept?"
-            currentValue={intent.acceptedTradeoffs}
-            onApply={(value) => setField("acceptedTradeoffs", value)}
-          />
-        </div>
-        <div>
-          <TextArea
-            label="What must this project never do or become?"
-            value={intent.neverDo}
-            onChange={(value) => setField("neverDo", value)}
-            minRows={4}
-          />
-          <DiscussPanel
-            field="neverDo"
-            fieldLabel="What must this project never do or become?"
-            currentValue={intent.neverDo}
-            onApply={(value) => setField("neverDo", value)}
-          />
-        </div>
-        <div>
-          <TextArea
-            label="What should building this teach you?"
-            value={intent.learningGoal}
-            onChange={(value) => setField("learningGoal", value)}
-            minRows={3}
-          />
-          <DiscussPanel
-            field="learningGoal"
-            fieldLabel="What should building this teach you?"
-            currentValue={intent.learningGoal}
-            onApply={(value) => setField("learningGoal", value)}
-          />
-        </div>
+        <IntentFields intent={intent} onChange={onChange} />
         <div className="flex justify-end">
           <button
             type="submit"
@@ -467,8 +394,7 @@ const trimIntent = (intent: IntentInterview): IntentInterview => ({
   purpose: intent.purpose.trim(),
   successCriteria: intent.successCriteria.trim(),
   acceptedTradeoffs: intent.acceptedTradeoffs.trim(),
-  neverDo: intent.neverDo.trim(),
-  learningGoal: intent.learningGoal.trim()
+  neverDo: intent.neverDo.trim()
 });
 
 const trimRequirements = (

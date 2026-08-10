@@ -216,7 +216,6 @@ const composeColdPrompt = (request: InceptionCreateProjectRequest): string => {
     `Success definition: ${intent.successCriteria}`,
     `Accepted tradeoffs: ${intent.acceptedTradeoffs}`,
     `Never do: ${intent.neverDo}`,
-    intent.learningGoal ? `Learning goal: ${intent.learningGoal}` : "",
     "",
     `Project premise: ${requirements.oneLiner}`,
     `First working version: ${requirements.firstVersionScope}`,

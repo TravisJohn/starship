@@ -254,7 +254,6 @@ export type IntentInterview = {
   successCriteria: string;
   acceptedTradeoffs: string;
   neverDo: string;
-  learningGoal: string;
 };
 
 export type RequirementsInterview = {

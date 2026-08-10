@@ -143,8 +143,7 @@ describe("generateDiscussReply", () => {
         purpose: "Help one person track their own habits.",
         successCriteria: "Used daily for a month.",
         acceptedTradeoffs: "No polish, just function.",
-        neverDo: "Become a multi-user product.",
-        learningGoal: "Learn SQLite."
+        neverDo: "Become a multi-user product."
       }
     });
 

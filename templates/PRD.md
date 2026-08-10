@@ -26,9 +26,6 @@
 **This project must never:**
 {{never_do}}
 
-**What building this should teach:**
-{{learning_goal}}
-
 ## 3. Problem
 
 {{problem_statement}}
