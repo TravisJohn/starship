@@ -1053,3 +1053,38 @@ Suite: **305 passing**, typecheck clean.
 at 3.9 KB — larger than either hand-drafted example — because nothing constrains
 *bullet length*. The rules cap sections, bullets and characters, not verbosity.
 See the next entry if a length rule gets added.
+
+## 2026-08-11 — Inception drafts are plain markdown now, and reviewable as markdown
+
+*Logged retroactively during the commit split: the work landed in an earlier
+session and never got an entry. Reconstructed from the code and its comments,
+so it records what changed and why, not the deliberation behind it.*
+
+**The bug.** Inception's PRD and CLAUDE.md drafting prompts asked the model to
+wrap an entire markdown document inside `{"draft": "..."}` JSON. Any model
+writing normal English prose eventually puts a straight quotation mark in a
+sentence, and that produces invalid JSON. The response then fell through to the
+raw-text path still carrying the literal `{"draft":"...` envelope and escaped
+`\n` sequences — which got written to `PRD.md` and `CLAUDE.md` on disk. The
+failure was silent and scaled with how well the model wrote.
+
+**Fix: stop asking for the envelope.** Both prompts now ask for the complete
+document as plain markdown, explicitly no JSON, no code fence, no preamble, and
+say outright that quotation marks and other punctuation need no escaping. A
+document is not structured data and there was never anything to gain by
+transporting it as if it were. Discuss and the briefing pass still return JSON,
+because those genuinely carry fields.
+
+**Review step shows markdown as markdown.** The Inception review screen rendered
+both drafts in a monospace textarea, which is the wrong altitude for a document
+whose whole job is to be read as prose. Each draft now has a Preview/Edit toggle,
+defaulting to Preview; Edit is the same textarea as before. Rendering goes
+through a new `MarkdownView` component with an explicit component map rather
+than a typography plugin, so heading, list, table and code styling stays owned
+by this codebase.
+
+Adds `react-markdown` and `remark-gfm` — 103 packages in the lockfile, all from
+that one dependency tree.
+
+Covered by a regression test asserting that prose containing straight quotes
+comes back verbatim and unwrapped.

@@ -153,6 +153,24 @@ describe("runHeadlessClaude", () => {
 
     expect(result).toBe("I shouldn't fabricate a decision from this.");
   });
+
+  /**
+   * Regression for Inception's PRD/CLAUDE.md drafting: those prompts used to ask
+   * the model to wrap the whole document in {"draft": "..."} JSON. A model that put
+   * straight quotation marks in its own prose (normal English, e.g. "how well")
+   * produced invalid JSON, which fell through this same raw-text path but still
+   * carrying the literal {"draft":"...\n\n..."} envelope and escaped \n sequences
+   * into PRD.md/CLAUDE.md on disk. The prompts now ask for plain markdown with no
+   * JSON envelope, so this path just needs to return prose-with-quotes untouched.
+   */
+  it("returns plain markdown containing straight quotes verbatim, unwrapped", async () => {
+    const markdown = '# Title\n\nSome text with "quoted words" and other punctuation.';
+    spawnMock.mockReturnValue(makeFakeProcess(claudeOutputJson(markdown)));
+
+    const result = await runHeadlessClaude(db, { cacheNamespace: "ns", prompt: "p", cwd: "." });
+
+    expect(result).toBe(markdown);
+  });
 });
 
 describe("runHeadlessClaude envelope shapes", () => {
