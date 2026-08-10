@@ -647,3 +647,61 @@ a worse failure mode than the documented duplication.
 
 Regression tests pin the dot, the underscore, and case preservation. Full
 suite 252 passing, typecheck clean.
+## 2026-08-07 — Every headless feature was broken, silently
+
+**Found by the CONTINUITY.md verification run, not by anything failing loudly.**
+The first live run against Sinulid fell to the degraded path with
+`Headless Claude returned non-object JSON.` One minimal diagnostic call
+(`printf ... | claude.exe -p --output-format json`) showed why:
+
+`claude -p --output-format json` now emits a **JSON array of stream events** —
+`system`/init, `rate_limit_event`, `assistant`, then `result` — instead of a
+single result object. `extractDraft` parsed the array, failed `isObject`, and
+threw before ever looking at the payload, which sits on the trailing `result`
+element.
+
+**Blast radius: all nine callers of `runHeadlessClaude`** — session briefings,
+File Map, Decision Map, Narrative Journey, Intent annotation, Inception
+drafting, Inception Discuss, and project-log summaries.
+
+**Why it went unnoticed, which is the part worth remembering.** Every one of
+these degrades gracefully by design — Discuss answers "Couldn't reach the
+assistant right now", `projectLogBriefing` silently falls back to the raw body,
+`decisionMap` returns empty — and the content-hash `headless_cache` kept serving
+older results for any prompt that had run before. Graceful degradation plus
+caching is exactly the combination that turns a total outage into something that
+looks like a quiet day. Worth remembering the next time a feature "still seems
+fine".
+
+**Fix:** `resolveResultEnvelope` accepts *both* shapes — the array (taking the
+last `type: "result"` event) and the legacy single object. Deliberately not a
+swap of one hard assumption for another, so a CLI change in either direction
+cannot repeat this. A stream carrying no result event now throws a distinct,
+accurate error rather than the misleading "non-object JSON".
+
+Six tests cover it, written against the array shape **captured from a real run**
+rather than an invented fixture: both envelopes, trailing-result selection,
+in-envelope errors, the no-result-event case, and nested-JSON unwrapping.
+
+**Two cosmetic bugs, both found only because the run used real project data:**
+- `readPrdSummary` swallowed the `---` rule that Sinulid's PRD puts between its
+  one-liner and the next heading, surfacing as a stray "---" mid-sentence. It now
+  skips horizontal rules — which also fixes the shelf row, where the same stray
+  text was showing.
+- `describeDurableState` prefixed a date onto a project-log title that already
+  began with one ("2026-07-25: 2026-07-25 - Phase 1 ..."), since
+  `extractDatedHeadings` keeps the whole heading as the title.
+
+**Live verification, second run: the normal path works.** Activity logged
+`continuity_written`, all five sections populated from a real transcript, five
+DECIDED bullets exactly at the cap, correct provenance line, and **0 non-ASCII
+bytes** in 3,897. The rewrite also incidentally confirmed the clobber guard's
+other branch: the degraded file from the first run was Starship-authored, so it
+was correctly replaced rather than preserved.
+
+Suite: **305 passing**, typecheck clean.
+
+**Open, for Travis's judgment:** the note is structurally compliant but came out
+at 3.9 KB — larger than either hand-drafted example — because nothing constrains
+*bullet length*. The rules cap sections, bullets and characters, not verbosity.
+See the next entry if a length rule gets added.

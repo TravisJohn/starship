@@ -51,6 +51,28 @@ Details here.
     );
   });
 
+  it("skips a horizontal rule separating the one-liner from the next section", () => {
+    // Sinulid's real PRD shape - the rule was being swallowed into the
+    // summary and surfacing as a stray "---" mid-sentence.
+    writePrd(`
+# Project
+
+## 1. One-liner
+
+Holds the thread from what a project was asked to do to whether it did it.
+
+---
+
+## 2. Intent Ledger
+
+Details here.
+`);
+
+    expect(readPrdSummary(tempDir)).toBe(
+      "Holds the thread from what a project was asked to do to whether it did it."
+    );
+  });
+
   it("returns null when PRD.md is missing", () => {
     expect(readPrdSummary(tempDir)).toBeNull();
   });

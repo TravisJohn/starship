@@ -22,6 +22,7 @@ type HeadlessClaudeRequest = {
 };
 
 type ClaudeOutput = {
+  type?: unknown;
   result?: unknown;
   is_error?: unknown;
   error?: unknown;
@@ -112,18 +113,50 @@ const resolveClaudeCommand = (): string => {
   return "claude";
 };
 
-const extractDraft = (stdout: string): string => {
-  const parsed = parseJson(stdout.trim()) as ClaudeOutput;
+/**
+ * `claude -p --output-format json` has shipped two envelope shapes. Older CLIs
+ * emit a single result object; newer ones emit an array of stream events -
+ * `system`/init, `rate_limit_event`, `assistant`, and finally `result`, which
+ * is the element carrying the payload.
+ *
+ * Both are accepted deliberately. Starship assumed the object form, and when
+ * the CLI moved to the array form every headless feature broke at once -
+ * File Map, Decision Map, Narrative Journey, Intent annotation, Inception
+ * drafting and Discuss, session briefings, project-log summaries - mostly
+ * *invisibly*, because each one degrades gracefully and a warm content-hash
+ * cache kept serving old results. Accepting both shapes means a CLI update in
+ * either direction can't do that again.
+ */
+const resolveResultEnvelope = (parsed: unknown): ClaudeOutput => {
+  if (Array.isArray(parsed)) {
+    const results = parsed.filter(
+      (element): element is ClaudeOutput => isObject(element) && element.type === "result"
+    );
+
+    const last = results[results.length - 1];
+    if (!last) {
+      throw new Error("Headless Claude returned a stream with no result event.");
+    }
+
+    return last;
+  }
+
   if (!isObject(parsed)) {
     throw new Error("Headless Claude returned non-object JSON.");
   }
 
-  if (parsed.is_error === true) {
-    throw new Error(`Headless Claude error: ${String(parsed.error ?? "")}`);
+  return parsed;
+};
+
+const extractDraft = (stdout: string): string => {
+  const envelope = resolveResultEnvelope(parseJson(stdout.trim()));
+
+  if (envelope.is_error === true) {
+    throw new Error(`Headless Claude error: ${String(envelope.error ?? "")}`);
   }
 
   const result =
-    typeof parsed.result === "string" ? parsed.result : JSON.stringify(parsed.result);
+    typeof envelope.result === "string" ? envelope.result : JSON.stringify(envelope.result);
 
   // `result` is only wrapped in `{draft: "..."}` for Inception's own
   // drafting prompts - every other caller (File Map, Decision Map,

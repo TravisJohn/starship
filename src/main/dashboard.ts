@@ -332,7 +332,7 @@ export const readPrdSummary = (projectPath: string): string | null => {
     }
 
     const trimmed = line.trim();
-    if (trimmed.length > 0) {
+    if (trimmed.length > 0 && !isHorizontalRule(trimmed)) {
       summaryLines.push(trimmed);
     }
   }
@@ -340,6 +340,15 @@ export const readPrdSummary = (projectPath: string): string | null => {
   const summary = summaryLines.join(" ").replace(/\s+/g, " ").trim();
   return summary.length > 0 ? summary : null;
 };
+
+/**
+ * A horizontal rule between sections is layout, not prose. Without this it
+ * gets swallowed into the one-liner - real PRDs (Sinulid's among them) put a
+ * `---` between the one-liner and the next heading, which then surfaced as a
+ * stray "---" mid-sentence wherever the summary is shown.
+ */
+const isHorizontalRule = (line: string): boolean =>
+  /^(?:-{3,}|\*{3,}|_{3,})$/.test(line);
 
 /**
  * Every phase listed in the project's own PRD.md (`## 9. Phases`, tolerant
