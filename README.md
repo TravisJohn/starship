@@ -138,8 +138,9 @@ The commit history and [`PROJECT_LOG.md`](PROJECT_LOG.md) are the real documenta
 | [`PRD.md`](PRD.md) | Full product requirements, v2.0 |
 | [`PROJECT_LOG.md`](PROJECT_LOG.md) | Decision log — every milestone and reversal |
 | [`CLAUDE.md`](CLAUDE.md) | Working agreement enforced on agents in this repo |
+| [`AGENTS.md`](AGENTS.md) | Same, for non-Claude agents |
 | `prompts/` | Headless prompt templates, each embedding the altitude rules |
-| `templates/` | PRD and CLAUDE.md templates with placeholders |
+| `templates/` | PRD / CLAUDE.md / CONTINUITY.md templates with placeholders |
 
 ---
 
