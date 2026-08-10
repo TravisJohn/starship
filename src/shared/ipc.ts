@@ -611,13 +611,15 @@ export type MenuSessionState = {
   active: boolean;
   projectName: string | null;
   panel: ActiveSessionPanel;
+  devSidebarVisible: boolean;
 };
 
 export type MenuAction =
   | { type: "setPanel"; panel: ActiveSessionPanel }
   | { type: "backToDashboard" }
   | { type: "closeSession" }
-  | { type: "exitAndSummarize" };
+  | { type: "exitAndSummarize" }
+  | { type: "toggleDevSidebar" };
 
 export type RendererToMainInvokeMap = {
   "pty:spawn": {

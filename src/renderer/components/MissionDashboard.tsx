@@ -78,6 +78,7 @@ export const MissionDashboard = ({
   // visible project once the dashboard loads, mirroring the mockup's
   // "always something selected" posture rather than starting empty.
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [detailPanelVisible, setDetailPanelVisible] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
@@ -382,6 +383,17 @@ export const MissionDashboard = ({
           </button>
           <button
             type="button"
+            onClick={() => setDetailPanelVisible((current) => !current)}
+            className={`h-8 rounded-md border px-3 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-sky-300 ${
+              detailPanelVisible
+                ? "border-zinc-700 text-zinc-100 hover:border-sky-400 hover:text-sky-200"
+                : "border-sky-500/70 text-sky-200"
+            }`}
+          >
+            {detailPanelVisible ? "Hide Details" : "Show Details"}
+          </button>
+          <button
+            type="button"
             onClick={() => void rescan()}
             className="h-8 rounded-md border border-zinc-700 px-3 text-sm font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
           >
@@ -541,7 +553,7 @@ export const MissionDashboard = ({
                   </tbody>
                 </table>
               </div>
-              {selectedProject ? (
+              {selectedProject && detailPanelVisible ? (
                 <ProjectDetailPanel
                   project={selectedProject}
                   isRunning={runningProjectIds.has(selectedProject.id)}

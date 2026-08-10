@@ -78,6 +78,9 @@ export const App = (): JSX.Element => {
   const [showBriefingByProjectId, setShowBriefingByProjectId] = useState<
     Record<string, boolean>
   >({});
+  const [devSidebarVisibleByProjectId, setDevSidebarVisibleByProjectId] = useState<
+    Record<string, boolean>
+  >({});
   const [launchLimitNotice, setLaunchLimitNotice] = useState<string | null>(null);
   const [pendingInterview, setPendingInterview] =
     useState<InceptionInterview | null>(null);
@@ -136,6 +139,7 @@ export const App = (): JSX.Element => {
     }
 
     setSessionPanelByProjectId((current) => ({ ...current, [projectId]: "terminal" }));
+    setDevSidebarVisibleByProjectId((current) => ({ ...current, [projectId]: true }));
     setActiveSessions((current) => [...current, session]);
     setFocusedProjectId(projectId);
     setView("shelf");
@@ -148,6 +152,7 @@ export const App = (): JSX.Element => {
     setObservationByProjectId((current) => omit(current, projectId));
     setBriefingByProjectId((current) => omit(current, projectId));
     setShowBriefingByProjectId((current) => omit(current, projectId));
+    setDevSidebarVisibleByProjectId((current) => omit(current, projectId));
   };
 
   // Removing the entry unmounts that session's <Terminal>, whose own
@@ -196,9 +201,12 @@ export const App = (): JSX.Element => {
     void window.starship.menu.setSessionState({
       active: focusedSession !== null,
       projectName: focusedSession?.project.name ?? null,
-      panel: (focusedProjectId && sessionPanelByProjectId[focusedProjectId]) || "terminal"
+      panel: (focusedProjectId && sessionPanelByProjectId[focusedProjectId]) || "terminal",
+      devSidebarVisible: focusedProjectId
+        ? (devSidebarVisibleByProjectId[focusedProjectId] ?? true)
+        : true
     });
-  }, [focusedSession, focusedProjectId, sessionPanelByProjectId]);
+  }, [focusedSession, focusedProjectId, sessionPanelByProjectId, devSidebarVisibleByProjectId]);
 
   // The View menu's panel items and File menu's session actions replaced
   // the old floating button row - this is where their clicks land.
@@ -219,6 +227,13 @@ export const App = (): JSX.Element => {
         }
       } else if (action.type === "exitAndSummarize") {
         exitAndSummarize();
+      } else if (action.type === "toggleDevSidebar") {
+        if (focusedProjectId) {
+          setDevSidebarVisibleByProjectId((current) => ({
+            ...current,
+            [focusedProjectId]: !(current[focusedProjectId] ?? true)
+          }));
+        }
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -421,6 +436,7 @@ export const App = (): JSX.Element => {
         const observation = observationByProjectId[projectId] ?? null;
         const briefing = briefingByProjectId[projectId] ?? null;
         const showBriefing = showBriefingByProjectId[projectId] ?? false;
+        const devSidebarVisible = devSidebarVisibleByProjectId[projectId] ?? true;
 
         return (
           <main
@@ -476,7 +492,7 @@ export const App = (): JSX.Element => {
                   projectName={session.project.name}
                 />
               </div>
-              <DevSidebar projectId={session.project.id} />
+              {devSidebarVisible ? <DevSidebar projectId={session.project.id} /> : null}
             </section>
             <section
               className={`min-h-0 min-w-0 flex-1 ${panel === "fileMap" ? "block" : "hidden"}`}

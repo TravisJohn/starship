@@ -1115,3 +1115,26 @@ Rendered through the same `MarkdownView` the Inception review uses, so the plan
 reads as prose rather than as a transcript dump. Projects with no transcript, an
 unreadable one, or no text-bearing assistant turn return nothing and the overlay
 says so, rather than showing an empty frame.
+
+## 2026-08-11 — Notes panel and dashboard detail panel can both be hidden
+
+*Logged retroactively during the commit split, same as the two entries above.*
+
+Two surfaces that were permanently on screen are now toggleable. Neither
+changes any data or behaviour — this is purely about reclaiming width.
+
+**Notes panel (Build Room).** The dev sidebar sat beside the terminal at all
+times, squeezing the pane the builder is actually reading. It now toggles from
+View > Notes Panel, a checkbox that reflects current state and is enabled only
+while the terminal panel is showing, since it means nothing on the File Map or
+Kanban panels. Visibility is tracked per project rather than globally: sessions
+are per project and a shared flag would leak one project's layout into another.
+It resets to visible on launch and its entry is dropped when the session closes,
+so nothing accumulates across sessions.
+
+**Detail panel (Mission Dashboard).** A Hide/Show Details button collapses the
+per-project action panel, giving the project table the full width. Selection is
+unaffected — hiding the panel does not deselect, so showing it again returns to
+the same project.
+
+Both default to visible, so nothing changes for anyone who never touches them.
