@@ -455,7 +455,15 @@ export const MissionDashboard = ({
                       >
                         <td className="w-56 overflow-hidden border-b border-zinc-900 px-3 py-3">
                           <div className="min-w-0">
-                            <p className="truncate font-medium">{project.name}</p>
+                            <div className="flex min-w-0 items-center gap-1.5">
+                              <p className="truncate font-medium">{project.name}</p>
+                              {project.hasIntentLedger ? null : (
+                                <span
+                                  title="No intent captured for this project yet"
+                                  className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400"
+                                />
+                              )}
+                            </div>
                             <p className="mt-1 truncate text-xs text-zinc-500">
                               {project.path}
                             </p>

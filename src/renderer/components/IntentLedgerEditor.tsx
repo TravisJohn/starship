@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import type { IntentLedgerInput, Project } from "../../shared/ipc";
+import type { IntentInterview, Project } from "../../shared/ipc";
+import { IntentFields } from "./IntentFields";
 import { LoadingAnimation } from "./LoadingAnimation";
 
 type IntentLedgerEditorProps = {
@@ -7,23 +8,34 @@ type IntentLedgerEditorProps = {
   onClose: () => void;
 };
 
-type LedgerFields = Omit<IntentLedgerInput, "projectId">;
-
-const emptyLedger: LedgerFields = {
+const emptyLedger: IntentInterview = {
   purpose: "",
   successCriteria: "",
   acceptedTradeoffs: "",
   neverDo: ""
 };
 
+/**
+ * Captures or revises the Intent Ledger for a project that already exists -
+ * including shelved projects that predate Inception and so never had intent
+ * captured at all. Asks the same four questions as Inception's intent step
+ * (see IntentFields), but unlike Inception it saves partial answers: intent
+ * reconstructed after the fact is often only partly recoverable, and a
+ * half-answered ledger is worth more than none.
+ *
+ * Writes to Starship's own database only. It never touches the project's
+ * files, so a ledger captured here informs Starship's briefings and
+ * annotations but is not visible to Claude Code itself.
+ */
 export const IntentLedgerEditor = ({
   project,
   onClose
 }: IntentLedgerEditorProps): JSX.Element => {
-  const [fields, setFields] = useState<LedgerFields>(emptyLedger);
+  const [fields, setFields] = useState<IntentInterview>(emptyLedger);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
+  const [hasLedger, setHasLedger] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -38,6 +50,7 @@ export const IntentLedgerEditor = ({
           return;
         }
 
+        setHasLedger(ledger !== null);
         if (ledger) {
           setFields({
             purpose: ledger.purpose,
@@ -65,10 +78,6 @@ export const IntentLedgerEditor = ({
     };
   }, [project.id]);
 
-  const setField = (field: keyof LedgerFields, value: string): void => {
-    setFields((current) => ({ ...current, [field]: value }));
-  };
-
   const save = async (): Promise<void> => {
     setSaving(true);
     setError(null);
@@ -87,6 +96,7 @@ export const IntentLedgerEditor = ({
         neverDo: ledger.neverDo
       });
       setSavedAt(ledger.updatedAt);
+      setHasLedger(true);
     } catch (saveError) {
       setError(stringifyError(saveError));
     } finally {
@@ -143,57 +153,33 @@ export const IntentLedgerEditor = ({
             mediaClassName="h-36 w-64 max-w-[64vw]"
           />
         ) : (
-          <form
-            className="space-y-4"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void save();
-            }}
-          >
-            <TextArea
-              label="Why this exists"
-              value={fields.purpose}
-              onChange={(value) => setField("purpose", value)}
-            />
-            <TextArea
-              label="What success looks like"
-              value={fields.successCriteria}
-              onChange={(value) => setField("successCriteria", value)}
-            />
-            <TextArea
-              label="Tradeoffs accepted"
-              value={fields.acceptedTradeoffs}
-              onChange={(value) => setField("acceptedTradeoffs", value)}
-            />
-            <TextArea
-              label="Must never do"
-              value={fields.neverDo}
-              onChange={(value) => setField("neverDo", value)}
-            />
-          </form>
+          <>
+            {!hasLedger ? (
+              <div className="mb-5 rounded-md border border-zinc-800 bg-zinc-900/60 px-4 py-3">
+                <p className="text-sm font-medium text-zinc-100">
+                  No intent captured for this project yet.
+                </p>
+                <p className="mt-1 text-sm leading-6 text-zinc-400">
+                  Answer what you can — partial answers save fine, and you can
+                  come back and sharpen them later.
+                </p>
+              </div>
+            ) : null}
+            <form
+              className="space-y-4"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void save();
+              }}
+            >
+              <IntentFields intent={fields} onChange={setFields} />
+            </form>
+          </>
         )}
       </div>
     </section>
   );
 };
-
-type TextAreaProps = {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-};
-
-const TextArea = ({ label, value, onChange }: TextAreaProps): JSX.Element => (
-  <label className="block">
-    <span className="text-sm font-medium text-zinc-200">{label}</span>
-    <textarea
-      value={value}
-      rows={5}
-      onChange={(event) => onChange(event.target.value)}
-      className="mt-2 w-full resize-y rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm leading-6 text-zinc-100 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-400/30"
-    />
-  </label>
-);
 
 const stringifyError = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);

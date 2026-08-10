@@ -18,6 +18,12 @@ export type Project = {
 
 export type MissionProject = Project & {
   ignored: boolean;
+  /**
+   * Whether an Intent Ledger has been captured for this project - presence
+   * only, never its contents. Projects created through Inception always have
+   * one; shelved projects only have one if intent was retrofitted onto them.
+   */
+  hasIntentLedger: boolean;
   lastActivityAt: string | null;
   prdSummary: string | null;
   projectLogEntry: ProjectLogEntry | null;

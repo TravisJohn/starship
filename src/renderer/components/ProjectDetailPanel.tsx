@@ -75,8 +75,6 @@ export const ProjectDetailPanel = ({
   formatBytes,
   formatLastActivity
 }: ProjectDetailPanelProps): JSX.Element => {
-  const intentDisabled = project.lastActivityAt !== null;
-
   return (
     <aside className="w-80 shrink-0 rounded-lg border border-zinc-800 bg-zinc-900/40 p-4">
       <div className="flex items-start justify-between">
@@ -101,22 +99,30 @@ export const ProjectDetailPanel = ({
         >
           File Map
         </button>
+        {/*
+          Open to every project, launched or not. This used to be disabled once
+          a project had any activity, on the assumption that intent is only
+          captured before the first launch - but intent can now be retrofitted
+          onto a project at any point, which is the whole point for shelved
+          projects that predate Inception.
+        */}
         <button
           type="button"
           title={
-            intentDisabled
-              ? "Already started - Intent is only shown for projects that haven't been launched yet"
-              : undefined
+            project.hasIntentLedger
+              ? "Intent Ledger"
+              : "No intent captured yet - open to capture it"
           }
-          disabled={intentDisabled}
           onClick={onOpenIntent}
-          className={`h-9 rounded-md border text-sm font-medium focus:outline-none focus:ring-2 focus:ring-sky-300 ${
-            intentDisabled
-              ? "cursor-not-allowed border-zinc-800 text-zinc-500 opacity-60"
-              : "border-zinc-700 text-zinc-100 hover:border-sky-400 hover:text-sky-200"
-          }`}
+          className="flex h-9 items-center justify-center gap-1.5 rounded-md border border-zinc-700 text-sm font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
         >
           Intent
+          {project.hasIntentLedger ? null : (
+            <span
+              aria-hidden="true"
+              className="h-1.5 w-1.5 rounded-full bg-amber-400"
+            />
+          )}
         </button>
         <button
           type="button"

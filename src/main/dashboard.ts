@@ -128,6 +128,9 @@ const decorateProjects = (
 ): MissionProject[] => {
   const ignoredByPath = db.getIgnoredProjectPaths(projects.map((project) => project.path));
   const noteStatusCounts = db.getNoteStatusCounts(projects.map((project) => project.id));
+  const projectIdsWithIntentLedger = db.getProjectIdsWithIntentLedger(
+    projects.map((project) => project.id)
+  );
 
   return projects.map((project) => {
     const transcripts = findAllTranscriptsForProject(project.path);
@@ -136,6 +139,7 @@ const decorateProjects = (
     return {
       ...project,
       ignored: ignoredByPath.get(project.path) ?? false,
+      hasIntentLedger: projectIdsWithIntentLedger.has(project.id),
       lastActivityAt: newest ? new Date(newest.mtimeMs).toISOString() : null,
       prdSummary: readPrdSummary(project.path),
       projectLogEntry: findLatestProjectLogEntry(project.path),

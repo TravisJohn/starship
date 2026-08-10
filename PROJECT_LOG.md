@@ -778,6 +778,69 @@ concrete: 24 of 31 projects currently have every headless prompt assembled with
 journey all run without intent context for the large majority of the shelf.
 Deferred to a future session.
 
+## 2026-08-07 — Intent Ledger retrofit for existing projects
+
+**Decision, closing the open question above.** The shelf was never meant to be
+a permanent intake path — it is pre-Inception backlog. All new projects go
+through Inception; the shelf gets no intent-capture logic of its own. Instead,
+intent can now be retrofitted onto an already-shelved project on demand,
+reusing Inception's existing intent step rather than adding a parallel flow.
+
+**What changed:**
+- `ProjectDetailPanel.tsx`: the Intent action is no longer disabled once a
+  project has activity. That gate (`project.lastActivityAt !== null`) encoded
+  the assumption that intent is only captured before the first launch, which
+  is exactly the assumption this decision reverses — and it was the one thing
+  actually blocking retrofit, since most shelved projects have prior activity.
+- New `IntentFields.tsx`: the four Intent Ledger questions plus their Discuss
+  threads, extracted from Inception's intent step and now shared with the
+  Intent Ledger editor. The two surfaces previously asked the same four things
+  in different words; the wording lives in one place now. It holds no
+  load/save/validation logic, because the callers' rules genuinely differ —
+  Inception requires all four answers to advance, the editor saves partials.
+- `IntentLedgerEditor.tsx`: uses the shared fields, and shows a "no intent
+  captured yet" empty state framing partial answers as acceptable. Intent
+  reconstructed after the fact is often only partly recoverable, and a
+  half-answered ledger beats none.
+- `hasIntentLedger` added to `MissionProject`, fed by a new batched
+  `db.getProjectIdsWithIntentLedger` (same shape as `getNoteStatusCounts` —
+  one query for the whole shelf, presence only, never the ledger's contents).
+  Surfaced as an amber dot on the shelf row and the Intent button, so "which
+  projects still need this" is answerable without opening each one.
+
+**Deliberately not done:**
+- *Project-aware Discuss.* Discuss stays project-blind: it never inspects the
+  project and helps only from the conversation. Considered and declined —
+  archaeological inference isn't needed for a shelf whose projects the builder
+  already knows the purpose of.
+- *Provenance flag.* Nothing distinguishes a ledger authored at Inception from
+  one retrofitted later. Noted as a possible future column; not added.
+- *Writing intent into project files.* A retrofitted ledger lives in Starship's
+  SQLite only. Unlike Inception, which injects intent into the PRD.md and
+  CLAUDE.md it generates, retrofit never touches an existing project's files —
+  prime directive 1. Consequence, accepted knowingly: retrofitted intent
+  reaches Starship's own briefings and annotations (`briefing.ts` already reads
+  the ledger and tolerates null) but is invisible to Claude Code itself on
+  relaunch, since it is in no file Claude reads and there is no cold prompt on
+  a relaunch. Exporting it into a session is a manual, user-driven step.
+
+**Tests:** 5 new cases in `db.test.ts` covering ledger presence — absent for a
+never-Inception project, present after retrofit, present for a partially
+answered ledger, batched separation of projects with and without, and the
+empty-list case. The test fake gained `projects` and `intent_ledger` support.
+Full suite: 257 passing. The `IntentFields` extraction itself is covered only
+by typecheck — the renderer has no component test infrastructure, and adding
+it was out of scope for this change.
+
+**Verified in the running app** (Playwright Electron driver, throwaway SQLite
+path): 19/19 checks. The Intent action opens on a project with real prior
+activity — the case the old gate blocked; the shelf dot count moved 31 → 30
+after a retrofit with the retrofitted row specifically losing its dot; a
+partial save round-tripped; and Inception's intent step still renders all four
+questions with a Discuss thread each. No headless `claude -p` call fired at any
+point — the editor is a pure DB read/write and Discuss only fires on an
+explicit Send.
+
 ## 2026-08-07 — Every headless feature was broken, silently
 
 **Found by the CONTINUITY.md verification run, not by anything failing loudly.**

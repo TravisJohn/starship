@@ -330,6 +330,29 @@ export class StarshipDb {
     return row ? rowToIntentLedger(row) : null;
   }
 
+  /**
+   * Which of these projects already have an Intent Ledger row. Batched (same
+   * shape as getNoteStatusCounts) rather than one query per project - the
+   * dashboard asks this for every shelf row on every load. Presence only: the
+   * shelf marks which projects still need intent captured, it never renders
+   * the ledger's contents, so there is no reason to read the text columns.
+   */
+  getProjectIdsWithIntentLedger(projectIds: ProjectId[]): Set<ProjectId> {
+    const uniqueIds = Array.from(new Set(projectIds));
+    if (uniqueIds.length === 0) {
+      return new Set();
+    }
+
+    const placeholders = uniqueIds.map(() => "?").join(", ");
+    const rows = this.db
+      .prepare(
+        `select project_id from intent_ledger where project_id in (${placeholders})`
+      )
+      .all(...uniqueIds) as { project_id: string }[];
+
+    return new Set(rows.map((row) => row.project_id));
+  }
+
   saveIntentLedger(input: IntentLedgerInput): IntentLedger {
     const project = this.getProject(input.projectId);
     if (!project) {
