@@ -45,7 +45,8 @@ const api: StarshipApi = {
     getLoadingMedia: () => ipcRenderer.invoke("assets:getLoadingMedia")
   },
   project: {
-    getPhases: (request) => ipcRenderer.invoke("project:getPhases", request)
+    getPhases: (request) => ipcRenderer.invoke("project:getPhases", request),
+    getInitialPlan: (request) => ipcRenderer.invoke("project:getInitialPlan", request)
   },
   briefing: {
     generate: (request) => ipcRenderer.invoke("briefing:generate", request),

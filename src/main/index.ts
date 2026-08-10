@@ -13,6 +13,7 @@ import { registerFileMapHandlers } from "./fileMap";
 import { registerGitTreeHandlers } from "./gitTree";
 import { registerInceptionHandlers } from "./inception";
 import { registerInceptionDiscussHandlers } from "./inceptionDiscuss";
+import { registerInitialPlanHandlers } from "./initialPlan";
 import { registerIntentAnnotationHandlers } from "./intentAnnotation";
 import { registerAppMenu } from "./menu";
 import { registerNarrativeJourneyHandlers } from "./narrativeJourney";
@@ -92,6 +93,7 @@ app.whenReady().then(async () => {
   registerFileMapHandlers(db);
   registerGitTreeHandlers(db);
   registerIntentHandlers(db);
+  registerInitialPlanHandlers();
   registerIntentAnnotationHandlers(db);
   registerInceptionDiscussHandlers(db);
   registerNarrativeJourneyHandlers(db);

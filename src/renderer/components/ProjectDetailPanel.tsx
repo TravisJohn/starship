@@ -39,6 +39,7 @@ type ProjectDetailPanelProps = {
   onOpenDecisionMap: () => void;
   onOpenNarrativeJourney: () => void;
   onOpenGitTree: () => void;
+  onOpenInitialPlan: () => void;
   onOpenNotes: () => void;
   onToggleIgnored: () => void;
   isTogglingIgnored: boolean;
@@ -69,6 +70,7 @@ export const ProjectDetailPanel = ({
   onOpenDecisionMap,
   onOpenNarrativeJourney,
   onOpenGitTree,
+  onOpenInitialPlan,
   onOpenNotes,
   onToggleIgnored,
   isTogglingIgnored,
@@ -123,6 +125,14 @@ export const ProjectDetailPanel = ({
               className="h-1.5 w-1.5 rounded-full bg-amber-400"
             />
           )}
+        </button>
+        <button
+          type="button"
+          title="Initial Plan"
+          onClick={onOpenInitialPlan}
+          className="h-9 rounded-md border border-zinc-700 text-sm font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
+        >
+          Initial Plan
         </button>
         <button
           type="button"

@@ -11,6 +11,7 @@ import type {
 import { DecisionMapOverlay } from "./DecisionMapOverlay";
 import { FileMapOverlay } from "./FileMapOverlay";
 import { GitTreeOverlay } from "./GitTreeOverlay";
+import { InitialPlanOverlay } from "./InitialPlanOverlay";
 import { HealthBar } from "./HealthBar";
 import { LoadingAnimation } from "./LoadingAnimation";
 import { NarrativeJourneyOverlay } from "./NarrativeJourneyOverlay";
@@ -69,6 +70,7 @@ export const MissionDashboard = ({
     null
   );
   const [gitTreeProject, setGitTreeProject] = useState<MissionProject | null>(null);
+  const [initialPlanProject, setInitialPlanProject] = useState<MissionProject | null>(null);
   const [notesProject, setNotesProject] = useState<MissionProject | null>(null);
   const [projectLogProject, setProjectLogProject] =
     useState<MissionProject | null>(null);
@@ -220,6 +222,11 @@ export const MissionDashboard = ({
   const openGitTree = (project: MissionProject): void => {
     appendActivity({ eventType: "git_tree_opened", projectId: project.id });
     setGitTreeProject(project);
+  };
+
+  const openInitialPlan = (project: MissionProject): void => {
+    appendActivity({ eventType: "initial_plan_opened", projectId: project.id });
+    setInitialPlanProject(project);
   };
 
   const openNotes = (project: MissionProject): void => {
@@ -553,6 +560,7 @@ export const MissionDashboard = ({
                   onOpenDecisionMap={() => openDecisionMap(selectedProject)}
                   onOpenNarrativeJourney={() => openNarrativeJourney(selectedProject)}
                   onOpenGitTree={() => openGitTree(selectedProject)}
+                  onOpenInitialPlan={() => openInitialPlan(selectedProject)}
                   onOpenNotes={() => openNotes(selectedProject)}
                   onToggleIgnored={() => void setIgnored(selectedProject)}
                   isTogglingIgnored={busyPath === selectedProject.path}
@@ -583,6 +591,10 @@ export const MissionDashboard = ({
       <GitTreeOverlay
         project={gitTreeProject}
         onClose={() => setGitTreeProject(null)}
+      />
+      <InitialPlanOverlay
+        project={initialPlanProject}
+        onClose={() => setInitialPlanProject(null)}
       />
       <NotesOverlay
         project={notesProject}

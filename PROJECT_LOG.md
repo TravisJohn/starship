@@ -1088,3 +1088,30 @@ that one dependency tree.
 
 Covered by a regression test asserting that prose containing straight quotes
 comes back verbatim and unwrapped.
+
+## 2026-08-11 — Initial Plan: read back the plan Claude actually proposed
+
+*Logged retroactively during the commit split, same as the entry above.*
+
+A new action in the project detail panel shows the plan Claude proposed in its
+first substantive reply after the cold prompt — the shape of the work as it was
+originally framed, which is the thing worth comparing against when a project has
+drifted.
+
+**Deterministic, not generated.** It scans the project's oldest transcript in
+order for the first assistant turn that actually said something (skipping turns
+that were pure `tool_use`) and returns that text verbatim. No headless call, no
+summarization, no cost — the data is already local and reading it back is a file
+scan. It stops at the first such turn deliberately: later turns are follow-up
+work, not the plan.
+
+**Why the shape is reliable enough to read back.** Starship's own cold prompt
+(`composeColdPrompt`) explicitly asks for a Phase 1 plan with discrete tasks and
+dependencies, the largest risk flagged, and a wait for approval. So this reads
+back a shape Starship itself elicited rather than guessing that the first reply
+happens to be a plan.
+
+Rendered through the same `MarkdownView` the Inception review uses, so the plan
+reads as prose rather than as a transcript dump. Projects with no transcript, an
+unreadable one, or no text-bearing assistant turn return nothing and the overlay
+says so, rather than showing an empty frame.

@@ -47,6 +47,15 @@ export type ProjectPhasesRequest = {
   projectPath: string;
 };
 
+export type InitialPlanRequest = {
+  projectPath: string;
+};
+
+export type InitialPlanResult = {
+  markdown: string | null;
+  capturedAt: string | null;
+};
+
 export type MissionDashboardState = {
   rootPath: string | null;
   projects: MissionProject[];
@@ -659,6 +668,10 @@ export type RendererToMainInvokeMap = {
     request: ProjectPhasesRequest;
     response: PrdPhase[];
   };
+  "project:getInitialPlan": {
+    request: InitialPlanRequest;
+    response: InitialPlanResult;
+  };
   "briefing:generate": {
     request: BriefingGenerateRequest;
     response: SessionBriefing;
@@ -822,6 +835,7 @@ export type StarshipApi = {
   };
   project: {
     getPhases: (request: ProjectPhasesRequest) => Promise<PrdPhase[]>;
+    getInitialPlan: (request: InitialPlanRequest) => Promise<InitialPlanResult>;
   };
   briefing: {
     generate: (request: BriefingGenerateRequest) => Promise<SessionBriefing>;
