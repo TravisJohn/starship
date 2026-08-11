@@ -56,6 +56,27 @@ export type InitialPlanResult = {
   capturedAt: string | null;
 };
 
+export type ContextExportRequest = {
+  projectId: ProjectId;
+  projectPath: string;
+  projectName: string;
+};
+
+export type ContextExportResult = {
+  /**
+   * The whole block as plain ASCII - not markdown, despite reading like it.
+   * It gets pasted into terminals and chat boxes, so it carries no fences and
+   * no characters outside ASCII.
+   */
+  text: string;
+  bytes: number;
+  trimmed: boolean;
+  /** What was dropped and why, when `trimmed`. Null otherwise. */
+  trimNotice: string | null;
+  /** Human-readable names of sections that had no source at all. */
+  missingSections: string[];
+};
+
 export type MissionDashboardState = {
   rootPath: string | null;
   projects: MissionProject[];
@@ -674,6 +695,10 @@ export type RendererToMainInvokeMap = {
     request: InitialPlanRequest;
     response: InitialPlanResult;
   };
+  "context:export": {
+    request: ContextExportRequest;
+    response: ContextExportResult;
+  };
   "briefing:generate": {
     request: BriefingGenerateRequest;
     response: SessionBriefing;
@@ -838,6 +863,9 @@ export type StarshipApi = {
   project: {
     getPhases: (request: ProjectPhasesRequest) => Promise<PrdPhase[]>;
     getInitialPlan: (request: InitialPlanRequest) => Promise<InitialPlanResult>;
+  };
+  contextExport: {
+    build: (request: ContextExportRequest) => Promise<ContextExportResult>;
   };
   briefing: {
     generate: (request: BriefingGenerateRequest) => Promise<SessionBriefing>;

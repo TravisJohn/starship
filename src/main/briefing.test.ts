@@ -8,7 +8,9 @@ vi.mock("electron", () => ({
   ipcMain: { handle: vi.fn() }
 }));
 
-import { buildSessionNarrative, extractContinuity, extractSummary } from "./briefing";
+import { buildSessionNarrative, extractContinuity, extractSummary, writeContinuity } from "./briefing";
+import type { ContinuityContext, ContinuitySections } from "./continuity";
+import type { StarshipDb } from "./db";
 
 let tempDir: string;
 let transcriptPath: string;
@@ -204,5 +206,88 @@ describe("extractSummary and extractContinuity are independent", () => {
 
     expect(extractSummary(raw)).toBeNull();
     expect(extractContinuity(raw)).not.toBeNull();
+  });
+});
+
+describe("writeContinuity", () => {
+  const sections: ContinuitySections = {
+    whereThisIs: "The model is validated.",
+    thisSession: ["Validated the harmonic model."],
+    decided: ["Local OCR only."],
+    never: ["Never become a general weather product."],
+    next: "Persist stations and predictions."
+  };
+
+  const context: ContinuityContext = {
+    projectName: "tide-atlas",
+    prdSummary: "A local-first tide almanac.",
+    phases: [],
+    latestLogEntry: null,
+    ledger: null
+  };
+
+  type Saved = { projectId: string; sections: ContinuitySections; degraded: boolean };
+
+  const stubDb = (input: { onSave?: () => void } = {}) => {
+    const saves: Saved[] = [];
+    const events: string[] = [];
+    const db = {
+      saveContinuitySections: (saved: Saved) => {
+        input.onSave?.();
+        saves.push(saved);
+        return { ...saved, createdAt: "", updatedAt: "" };
+      },
+      logActivity: ({ eventType }: { eventType: string }) => {
+        events.push(eventType);
+        return {};
+      }
+    } as unknown as StarshipDb;
+
+    return { db, saves, events };
+  };
+
+  const request = () => ({
+    projectId: "p1",
+    projectPath: tempDir,
+    projectName: "tide-atlas"
+  });
+
+  it("persists the sections when the session produced a real handoff", () => {
+    const { db, saves } = stubDb();
+
+    writeContinuity(db, request(), context, Date.now(), { sections });
+
+    expect(saves).toHaveLength(1);
+    expect(saves[0].sections.next).toBe("Persist stations and predictions.");
+    expect(saves[0].degraded).toBe(false);
+  });
+
+  it("persists the degraded sections too, flagged as degraded", () => {
+    const { db, saves } = stubDb();
+
+    writeContinuity(db, request(), context, Date.now(), {
+      degraded: "The session ended before it could be summarized."
+    });
+
+    expect(saves).toHaveLength(1);
+    expect(saves[0].degraded).toBe(true);
+    // Degraded or not, the durable half is still described rather than blank.
+    expect(saves[0].sections.whereThisIs).toContain("A local-first tide almanac");
+  });
+
+  it("still writes the handoff file when storing the sections fails", () => {
+    const { db, events } = stubDb({
+      onSave: () => {
+        throw new Error("database is locked");
+      }
+    });
+
+    const result = writeContinuity(db, request(), context, Date.now(), { sections });
+
+    // The file is what the next agent actually reads, so a storage failure
+    // must not be able to cost the user it.
+    expect(result.filePath).toBe(path.join(tempDir, "CONTINUITY.md"));
+    expect(fs.existsSync(path.join(tempDir, "CONTINUITY.md"))).toBe(true);
+    expect(events).toContain("continuity_sections_store_failed");
   });
 });

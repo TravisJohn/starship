@@ -48,6 +48,9 @@ const api: StarshipApi = {
     getPhases: (request) => ipcRenderer.invoke("project:getPhases", request),
     getInitialPlan: (request) => ipcRenderer.invoke("project:getInitialPlan", request)
   },
+  contextExport: {
+    build: (request) => ipcRenderer.invoke("context:export", request)
+  },
   briefing: {
     generate: (request) => ipcRenderer.invoke("briefing:generate", request),
     getLatest: (request) => ipcRenderer.invoke("briefing:getLatest", request),

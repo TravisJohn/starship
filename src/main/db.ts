@@ -16,6 +16,16 @@ import type {
   SessionBriefingHistoryEntry
 } from "../shared/ipc";
 import { NOTE_STATUS_ORDER } from "../shared/ipc";
+// Type-only, so this never becomes a runtime import cycle with continuity.ts.
+import type { ContinuitySections } from "./continuity";
+
+export type StoredContinuitySections = {
+  projectId: ProjectId;
+  sections: ContinuitySections;
+  degraded: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
 
 type ProjectRow = {
   id: string;
@@ -30,6 +40,18 @@ type IntentLedgerRow = {
   success_criteria: string;
   accepted_tradeoffs: string;
   never_do: string;
+  created_at: string;
+  updated_at: string;
+};
+
+type ContinuitySectionsRow = {
+  project_id: string;
+  where_this_is: string;
+  this_session_json: string;
+  decided_json: string;
+  never_json: string;
+  next: string;
+  degraded: number;
   created_at: string;
   updated_at: string;
 };
@@ -143,6 +165,26 @@ export class StarshipDb {
         project_id text not null references projects(id) on delete cascade,
         summary text not null,
         created_at text not null
+      );
+
+      /*
+       * The handoff sections as generated at session end. They are written to
+       * the project's CONTINUITY.md too, but that file is the user's copy and
+       * is never read back as a source of truth - so anything of ours that
+       * needs them (the context export) reads them from here instead. Only the
+       * latest set is kept: the note itself is overwritten every session, and a
+       * history of superseded handoffs would answer no question anyone asks.
+       */
+      create table if not exists continuity_sections (
+        project_id text primary key references projects(id) on delete cascade,
+        where_this_is text not null,
+        this_session_json text not null,
+        decided_json text not null,
+        never_json text not null,
+        next text not null,
+        degraded integer not null default 0 check (degraded in (0, 1)),
+        created_at text not null,
+        updated_at text not null
       );
 
       create table if not exists notes (
@@ -398,6 +440,77 @@ export class StarshipDb {
       successCriteria: input.successCriteria,
       acceptedTradeoffs: input.acceptedTradeoffs,
       neverDo: input.neverDo,
+      createdAt,
+      updatedAt: now
+    };
+  }
+
+  getContinuitySections(projectId: ProjectId): StoredContinuitySections | null {
+    const row = this.db
+      .prepare("select * from continuity_sections where project_id = ?")
+      .get(projectId) as ContinuitySectionsRow | undefined;
+
+    return row ? rowToContinuitySections(row) : null;
+  }
+
+  /**
+   * Only the latest handoff is kept, so this upserts rather than appending.
+   * `degraded` travels with the sections because a consumer needs to know the
+   * difference between "the session said this is next" and "the session could
+   * not be read, so this was reconstructed from durable state".
+   */
+  saveContinuitySections(input: {
+    projectId: ProjectId;
+    sections: ContinuitySections;
+    degraded: boolean;
+  }): StoredContinuitySections {
+    const project = this.getProject(input.projectId);
+    if (!project) {
+      throw new Error(`Project not found: ${input.projectId}`);
+    }
+
+    const now = new Date().toISOString();
+    const createdAt = this.getContinuitySections(input.projectId)?.createdAt ?? now;
+
+    this.db
+      .prepare(
+        `insert into continuity_sections (
+          project_id,
+          where_this_is,
+          this_session_json,
+          decided_json,
+          never_json,
+          next,
+          degraded,
+          created_at,
+          updated_at
+        )
+        values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        on conflict(project_id) do update set
+          where_this_is = excluded.where_this_is,
+          this_session_json = excluded.this_session_json,
+          decided_json = excluded.decided_json,
+          never_json = excluded.never_json,
+          next = excluded.next,
+          degraded = excluded.degraded,
+          updated_at = excluded.updated_at`
+      )
+      .run(
+        input.projectId,
+        input.sections.whereThisIs,
+        JSON.stringify(input.sections.thisSession),
+        JSON.stringify(input.sections.decided),
+        JSON.stringify(input.sections.never),
+        input.sections.next,
+        input.degraded ? 1 : 0,
+        createdAt,
+        now
+      );
+
+    return {
+      projectId: input.projectId,
+      sections: input.sections,
+      degraded: input.degraded,
       createdAt,
       updatedAt: now
     };
@@ -744,6 +857,37 @@ const rowToProject = (row: ProjectRow): Project => ({
   name: row.name,
   path: row.path,
   createdAt: row.created_at
+});
+
+/**
+ * The three list columns are JSON text. A row written by an older build, or
+ * hand-edited, could hold anything - so each list is parsed defensively and
+ * falls back to empty rather than throwing. A handoff missing its bullets is
+ * recoverable; one that crashes the export is not.
+ */
+const parseStringList = (value: string): string[] => {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((entry): entry is string => typeof entry === "string")
+      : [];
+  } catch {
+    return [];
+  }
+};
+
+const rowToContinuitySections = (row: ContinuitySectionsRow): StoredContinuitySections => ({
+  projectId: row.project_id,
+  sections: {
+    whereThisIs: row.where_this_is,
+    thisSession: parseStringList(row.this_session_json),
+    decided: parseStringList(row.decided_json),
+    never: parseStringList(row.never_json),
+    next: row.next
+  },
+  degraded: row.degraded === 1,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at
 });
 
 const rowToIntentLedger = (row: IntentLedgerRow): IntentLedger => ({

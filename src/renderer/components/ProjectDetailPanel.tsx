@@ -40,6 +40,7 @@ type ProjectDetailPanelProps = {
   onOpenNarrativeJourney: () => void;
   onOpenGitTree: () => void;
   onOpenInitialPlan: () => void;
+  onOpenContextExport: () => void;
   onOpenNotes: () => void;
   onToggleIgnored: () => void;
   isTogglingIgnored: boolean;
@@ -71,6 +72,7 @@ export const ProjectDetailPanel = ({
   onOpenNarrativeJourney,
   onOpenGitTree,
   onOpenInitialPlan,
+  onOpenContextExport,
   onOpenNotes,
   onToggleIgnored,
   isTogglingIgnored,
@@ -133,6 +135,14 @@ export const ProjectDetailPanel = ({
           className="h-9 rounded-md border border-zinc-700 text-sm font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
         >
           Initial Plan
+        </button>
+        <button
+          type="button"
+          title="Rules, intent, state and next steps as one copyable block"
+          onClick={onOpenContextExport}
+          className="h-9 rounded-md border border-zinc-700 text-sm font-medium text-zinc-100 hover:border-sky-400 hover:text-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-300"
+        >
+          Export Context
         </button>
         <button
           type="button"

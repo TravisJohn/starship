@@ -1138,3 +1138,53 @@ unaffected — hiding the panel does not deselect, so showing it again returns t
 the same project.
 
 Both default to visible, so nothing changes for anyone who never touches them.
+
+## 2026-08-11 — Universal context exporter
+
+One copyable block carrying Rules, Intent, State and Next Steps, so a project
+can be handed to a *starting* agent rather than only closed out by a finishing
+one. `CONTINUITY.md` covers the end of a session; nothing covered the beginning.
+It has to serve two jobs at once — carrying context into a new Claude Code
+session, and cold-starting Codex or Antigravity — which is why it is
+self-contained rather than a list of file pointers.
+
+**No model call, by design.** Every section is assembled from data already on
+disk or in SQLite, so the export is free, instant and repeatable. That is the
+decision the rest of the design follows from: an export that cost money would
+be pressed rarely and hedged around, and one that took ten seconds would not be
+pressed at all.
+
+**Next Steps needed a home.** The handoff sections were generated at session end
+and then thrown away — written into the project's `CONTINUITY.md` and nowhere
+else. Reading that file back was not an option: prime directive 1's carve-out
+says the file is written, never read as a source of truth. So the sections are
+now persisted in a `continuity_sections` table at the moment they are generated,
+and the exporter reads from there. Only the latest set is kept, matching the
+note's own overwrite-never-append rule; a history of superseded handoffs would
+answer no question anyone asks.
+
+Storing is deliberately allowed to fail without taking the file down with it.
+The file is what the next agent actually reads, so a locked database logs
+`continuity_sections_store_failed` to the activity log and the write proceeds.
+
+**Rules is the project's own CLAUDE.md, verbatim.** Redundant for Claude Code,
+which reads it anyway — and exactly the thing Codex and Antigravity cannot see.
+
+**Constraints are never truncated.** Under the 20 KB cap (~5k tokens, chosen
+because the block competes for the same context window as the work itself),
+State gives way first: the log body, then State entirely, then Next. Rules is
+truncated only as a last resort and says so loudly with a marker, because a
+half-stated constraint reads as complete and is more dangerous than an absent
+one. Every section with no source says so in words rather than being silently
+omitted — a missing section that looks like an empty one is how a fresh agent
+gets misled.
+
+**Tests:** 19 new cases. Assembly with every source present, each missing source
+named out loud, the degraded-next caveat, ASCII folding, the size cap, log-body
+trimming, the rules-truncation last resort with the ledger surviving whole, and
+the database round trip including the JSON list columns. Full suite **324
+passing**, typecheck clean.
+
+**Verified in the real app** against a synthetic fixture: the block renders for a
+project with rules and intent, and for one with neither, and Copy round-trips
+through the clipboard byte for byte — 1,322 characters, 0 non-ASCII.

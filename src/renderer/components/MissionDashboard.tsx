@@ -11,6 +11,7 @@ import type {
 import { DecisionMapOverlay } from "./DecisionMapOverlay";
 import { FileMapOverlay } from "./FileMapOverlay";
 import { GitTreeOverlay } from "./GitTreeOverlay";
+import { ContextExportOverlay } from "./ContextExportOverlay";
 import { InitialPlanOverlay } from "./InitialPlanOverlay";
 import { HealthBar } from "./HealthBar";
 import { LoadingAnimation } from "./LoadingAnimation";
@@ -71,6 +72,7 @@ export const MissionDashboard = ({
   );
   const [gitTreeProject, setGitTreeProject] = useState<MissionProject | null>(null);
   const [initialPlanProject, setInitialPlanProject] = useState<MissionProject | null>(null);
+  const [contextExportProject, setContextExportProject] = useState<MissionProject | null>(null);
   const [notesProject, setNotesProject] = useState<MissionProject | null>(null);
   const [projectLogProject, setProjectLogProject] =
     useState<MissionProject | null>(null);
@@ -228,6 +230,11 @@ export const MissionDashboard = ({
   const openInitialPlan = (project: MissionProject): void => {
     appendActivity({ eventType: "initial_plan_opened", projectId: project.id });
     setInitialPlanProject(project);
+  };
+
+  const openContextExport = (project: MissionProject): void => {
+    appendActivity({ eventType: "context_export_opened", projectId: project.id });
+    setContextExportProject(project);
   };
 
   const openNotes = (project: MissionProject): void => {
@@ -573,6 +580,7 @@ export const MissionDashboard = ({
                   onOpenNarrativeJourney={() => openNarrativeJourney(selectedProject)}
                   onOpenGitTree={() => openGitTree(selectedProject)}
                   onOpenInitialPlan={() => openInitialPlan(selectedProject)}
+                  onOpenContextExport={() => openContextExport(selectedProject)}
                   onOpenNotes={() => openNotes(selectedProject)}
                   onToggleIgnored={() => void setIgnored(selectedProject)}
                   isTogglingIgnored={busyPath === selectedProject.path}
@@ -607,6 +615,10 @@ export const MissionDashboard = ({
       <InitialPlanOverlay
         project={initialPlanProject}
         onClose={() => setInitialPlanProject(null)}
+      />
+      <ContextExportOverlay
+        project={contextExportProject}
+        onClose={() => setContextExportProject(null)}
       />
       <NotesOverlay
         project={notesProject}

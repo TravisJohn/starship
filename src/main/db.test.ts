@@ -63,6 +63,18 @@ vi.mock("better-sqlite3", () => {
     updated_at: string;
   };
 
+  type ContinuitySectionsRow = {
+    project_id: string;
+    where_this_is: string;
+    this_session_json: string;
+    decided_json: string;
+    never_json: string;
+    next: string;
+    degraded: number;
+    created_at: string;
+    updated_at: string;
+  };
+
   class FakeDatabase {
     private rows: ActivityLogRow[] = [];
     private nextId = 1;
@@ -72,6 +84,7 @@ vi.mock("better-sqlite3", () => {
     private notes: NoteRow[] = [];
     private projects: ProjectRow[] = [];
     private intentLedgers = new Map<string, IntentLedgerRow>();
+    private continuitySections = new Map<string, ContinuitySectionsRow>();
 
     pragma(): void {
       return undefined;
@@ -95,6 +108,7 @@ vi.mock("better-sqlite3", () => {
         | NoteRow
         | ProjectRow
         | IntentLedgerRow
+        | ContinuitySectionsRow
         | undefined;
       all: (
         ...args: unknown[]
@@ -220,6 +234,32 @@ vi.mock("better-sqlite3", () => {
             return { lastInsertRowid: 0 };
           }
 
+          if (sql.includes("insert into continuity_sections")) {
+            const [
+              projectId,
+              whereThisIs,
+              thisSessionJson,
+              decidedJson,
+              neverJson,
+              next,
+              degraded,
+              createdAt,
+              updatedAt
+            ] = args as [string, string, string, string, string, string, number, string, string];
+            this.continuitySections.set(projectId, {
+              project_id: projectId,
+              where_this_is: whereThisIs,
+              this_session_json: thisSessionJson,
+              decided_json: decidedJson,
+              never_json: neverJson,
+              next,
+              degraded,
+              created_at: createdAt,
+              updated_at: updatedAt
+            });
+            return { lastInsertRowid: 0 };
+          }
+
           return { lastInsertRowid: 0 };
         },
         get: (...args: unknown[]) => {
@@ -254,6 +294,14 @@ vi.mock("better-sqlite3", () => {
           ) {
             const [projectId] = args as string[];
             return this.intentLedgers.get(projectId);
+          }
+
+          if (
+            sql.includes("from continuity_sections") &&
+            sql.includes("where project_id = ?")
+          ) {
+            const [projectId] = args as string[];
+            return this.continuitySections.get(projectId);
           }
 
           return undefined;
@@ -669,5 +717,75 @@ describe("StarshipDb intent ledger presence", () => {
 
   it("returns an empty set for an empty project id list", () => {
     expect(db.getProjectIdsWithIntentLedger([])).toEqual(new Set());
+  });
+});
+
+describe("StarshipDb continuity sections", () => {
+  let tempDir: string;
+  let db: StarshipDb;
+
+  const sections = {
+    whereThisIs: "Phases one to four are built.",
+    thisSession: ["Retrofit works now.", "The headless outage is over."],
+    decided: ["The note is written by the finishing agent."],
+    never: ["Never write into the user's projects."],
+    next: "Wire the Antigravity trigger."
+  };
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "starship-db-continuity-"));
+    db = new StarshipDb(path.join(tempDir, "starship.sqlite"));
+  });
+
+  afterEach(() => {
+    db.close();
+    fs.rmSync(tempDir, { force: true, recursive: true });
+  });
+
+  it("returns nothing for a project whose session has never ended through Starship", () => {
+    const project = db.addProject(path.join(tempDir, "never-ended"));
+    expect(db.getContinuitySections(project.id)).toBeNull();
+  });
+
+  it("round-trips every section, including the list columns stored as JSON", () => {
+    const project = db.addProject(path.join(tempDir, "round-trip"));
+    db.saveContinuitySections({ projectId: project.id, sections, degraded: false });
+
+    const stored = db.getContinuitySections(project.id);
+    expect(stored?.sections).toEqual(sections);
+    expect(stored?.degraded).toBe(false);
+  });
+
+  it("carries the degraded flag, so a consumer can tell a real handoff from a reconstructed one", () => {
+    const project = db.addProject(path.join(tempDir, "degraded"));
+    db.saveContinuitySections({ projectId: project.id, sections, degraded: true });
+
+    expect(db.getContinuitySections(project.id)?.degraded).toBe(true);
+  });
+
+  it("keeps only the latest handoff, since the note itself is overwritten every session", () => {
+    const project = db.addProject(path.join(tempDir, "overwrite"));
+    db.saveContinuitySections({ projectId: project.id, sections, degraded: false });
+    db.saveContinuitySections({
+      projectId: project.id,
+      sections: { ...sections, next: "Build the exporter." },
+      degraded: false
+    });
+
+    expect(db.getContinuitySections(project.id)?.sections.next).toBe("Build the exporter.");
+  });
+
+  it("preserves created_at across an overwrite while moving updated_at", () => {
+    const project = db.addProject(path.join(tempDir, "timestamps"));
+    const first = db.saveContinuitySections({ projectId: project.id, sections, degraded: false });
+    const second = db.saveContinuitySections({ projectId: project.id, sections, degraded: false });
+
+    expect(second.createdAt).toBe(first.createdAt);
+  });
+
+  it("refuses to store sections for a project that does not exist", () => {
+    expect(() =>
+      db.saveContinuitySections({ projectId: "missing", sections, degraded: false })
+    ).toThrow(/Project not found/);
   });
 });

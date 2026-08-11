@@ -150,7 +150,7 @@ export const generateSessionBriefing = async (
  * (see continuity.ts), and its outcome is observable in the Activity Log
  * rather than blocking the exit flow the builder is waiting on.
  */
-const writeContinuity = (
+export const writeContinuity = (
   db: StarshipDb,
   request: BriefingGenerateRequest,
   context: ContinuityContext,
@@ -161,6 +161,21 @@ const writeContinuity = (
   const sections = degraded
     ? buildDegradedSections(context, outcome.degraded)
     : outcome.sections;
+
+  // Persisted as well as written to the project, because CONTINUITY.md is the
+  // user's copy and is never read back as a source of truth. The context
+  // export needs these sections, and this is the only place they exist.
+  // Storing must not be able to cost the user the file itself, so a failure
+  // here is logged and swallowed rather than thrown.
+  try {
+    db.saveContinuitySections({ projectId: request.projectId, sections, degraded });
+  } catch (error: unknown) {
+    db.logActivity({
+      eventType: "continuity_sections_store_failed",
+      projectId: request.projectId,
+      detail: { error: stringifyError(error) }
+    });
+  }
 
   const result = writeContinuityDocument({
     projectPath: request.projectPath,
