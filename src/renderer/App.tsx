@@ -282,7 +282,7 @@ export const App = (): JSX.Element => {
     if (exitFlow) {
       return (
         <SessionBriefingScreen
-          projectName={exitFlow.project.name}
+          project={exitFlow.project}
           status={exitFlow.status}
           summary={exitFlow.summary}
           onContinue={() => setExitFlow(null)}

@@ -191,6 +191,61 @@ describe("buildContextExport", () => {
     expect(result.text).toContain("So I stop driving to a beach");
   });
 
+  it("carries what the last session did and what it settled", () => {
+    const result = buildContextExport(
+      stubDb({ ledger: ledger(), stored: stored() }),
+      request()
+    );
+
+    expect(result.text).toContain("MOST RECENT SESSION");
+    expect(result.text).toContain("Validated the harmonic model against a published table.");
+    expect(result.text).toContain("DECIDED - do not reopen without cause");
+    expect(result.text).toContain("Local OCR only.");
+  });
+
+  it("omits the session sections entirely when nothing was recorded, rather than announcing them", () => {
+    const result = buildContextExport(
+      stubDb({
+        ledger: ledger(),
+        stored: stored({ sections: sections({ thisSession: [], decided: [] }) })
+      }),
+      request()
+    );
+
+    expect(result.text).not.toContain("MOST RECENT SESSION");
+    expect(result.text).not.toContain("DECIDED");
+    // NEXT already covers the "nothing has happened yet" case.
+    expect(result.text).toContain("NEXT");
+  });
+
+  it("drops the session narrative before state, and the next step last of all", () => {
+    fs.writeFileSync(
+      path.join(projectPath, "PROJECT_LOG.md"),
+      `# Project Log\n\n## 2026-08-09 - Validation before UI\n\n${"Long body line.\n".repeat(1500)}`
+    );
+    // Big enough that dropping the log body alone cannot bring it under.
+    const wordy = Array.from(
+      { length: 900 },
+      (_, i) => `Session outcome number ${i}, described at the sort of length that fills a budget.`
+    );
+
+    const result = buildContextExport(
+      stubDb({
+        ledger: ledger(),
+        stored: stored({ sections: sections({ thisSession: wordy }) })
+      }),
+      request()
+    );
+
+    expect(result.bytes).toBeLessThanOrEqual(MAX_BYTES);
+    expect(result.trimmed).toBe(true);
+    expect(result.text).not.toContain("Session outcome number 0");
+    // State outranks the narrative, and the single most actionable line
+    // survives everything above it.
+    expect(result.text).toContain("A local-first tide almanac");
+    expect(result.text).toContain("Persist stations and predictions.");
+  });
+
   it("still produces a usable block for a project with no files at all", () => {
     const bare = fs.mkdtempSync(path.join(os.tmpdir(), "starship-ctx-bare-"));
     try {

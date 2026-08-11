@@ -1188,3 +1188,40 @@ passing**, typecheck clean.
 **Verified in the real app** against a synthetic fixture: the block renders for a
 project with rules and intent, and for one with neither, and Copy round-trips
 through the clipboard byte for byte — 1,322 characters, 0 non-ASCII.
+
+## 2026-08-11 — Copy Handoff on the session-end screen
+
+The last of the three deferred handoff items. Exit & Summarize now offers **Copy
+Handoff** beside Continue to Dashboard, putting the whole context block on the
+clipboard for whichever tool picks the project up next.
+
+**One block, not two.** Rather than give the session-end screen its own format,
+the exporter itself was extended to carry `MOST RECENT SESSION` and `DECIDED`
+whenever they are recorded — sections that were already being persisted but
+which only `next` was reading. So the dashboard's Export Context got richer too,
+and the button is a straight reuse rather than a second formatter to keep in
+step. Two shapes of the same document is how they drift.
+
+**It never fires on its own.** "Copy to clipboard on session completion" could
+have meant auto-copy; it doesn't. The builder has just finished a session and
+may well have something of their own on the clipboard, and a silent clobber is
+not worth the saved click.
+
+**Trim ladder rewritten.** The old chain of four near-identical if-blocks became
+an ordered list of drops, which is what let the two new sections slot in without
+a fifth copy of the same code. Order is now: log body, session narrative, state,
+decided, next — ascending value to a receiving agent — with rules truncation
+still the loud last resort and constraints never trimmed.
+
+**No timing problem.** `briefing.generate` persists the sections and resolves
+before the screen reaches "ready", so the block always carries this session's
+own outcomes. The button is disabled while summarizing.
+
+**Tests:** 3 new cases covering the two new sections, their omission when nothing
+was recorded, and the ladder order. Full suite **327 passing**, typecheck clean.
+
+**Verified end to end at zero model cost.** A project with no transcript takes
+`generateSessionBriefing`'s early-return path — it persists degraded sections and
+returns without ever shelling out to `claude -p` — so the whole real pipeline
+(persist, write CONTINUITY.md, build, copy) was exercised for free. Clipboard
+came back 1,407 characters with every section present and 0 non-ASCII bytes.

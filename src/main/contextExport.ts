@@ -156,70 +156,113 @@ export const buildContextExport = (
   };
 
   /*
-   * Assembly order is also the order of protection. Rules and Intent are never
-   * trimmed: a half-stated constraint is more dangerous than an absent one,
-   * because it reads as complete. State gives way first, then Next, and only
-   * as a last resort is Rules truncated - loudly, with a marker, so the reader
-   * knows to go and read the file.
+   * What the last session actually did. Only present once a session has ended
+   * through Starship, and omitted rather than announced when empty - unlike
+   * Rules and Intent, whose absence changes how the receiving agent should
+   * behave, a missing session narrative just means nothing has happened yet,
+   * which NEXT already says.
    */
-  const protectedText = [
-    header,
-    renderSection(rulesSection),
-    renderSection(neverSection),
-    renderSection(intentSection)
-  ].join("\n\n");
+  const sessionSection: Section | null =
+    stored && normalizeBullets(stored.sections.thisSession).length > 0
+      ? {
+          heading: "MOST RECENT SESSION",
+          lines: normalizeBullets(stored.sections.thisSession).map((b) => `- ${b}`)
+        }
+      : null;
 
-  const nextText = renderSection(nextSection);
+  const decidedSection: Section | null =
+    stored && normalizeBullets(stored.sections.decided).length > 0
+      ? {
+          heading: "DECIDED - do not reopen without cause",
+          lines: normalizeBullets(stored.sections.decided).map((b) => `- ${b}`)
+        }
+      : null;
+
+  /*
+   * Rules and Intent are never dropped: a half-stated constraint is more
+   * dangerous than an absent one, because it reads as complete. Everything
+   * else gives way in ascending order of value to a receiving agent - the log
+   * body first, then the session narrative, then state, then the settled
+   * decisions, and only then the single most actionable line, NEXT. Rules is
+   * truncated last of all, loudly, so the reader knows to open the file.
+   */
+  let includeLogBody = true;
+  let includeSession = true;
+  let includeState = true;
+  let includeDecided = true;
+  let includeNext = true;
+
+  const assemble = (): string => {
+    const parts = [
+      header,
+      renderSection(rulesSection),
+      renderSection(neverSection),
+      renderSection(intentSection),
+      ...(includeState ? [renderSection(buildStateSection(context, includeLogBody))] : []),
+      ...(includeSession && sessionSection ? [renderSection(sessionSection)] : []),
+      ...(includeDecided && decidedSection ? [renderSection(decidedSection)] : []),
+      ...(includeNext ? [renderSection(nextSection)] : [])
+    ];
+    return `${toAscii(parts.join("\n\n"))}\n`;
+  };
+
+  // Each notice is written to describe everything dropped up to that point,
+  // since only the last one applied is shown.
+  const ladder: { drop: () => void; notice: string }[] = [
+    {
+      drop: () => {
+        includeLogBody = false;
+      },
+      notice: "The latest project log entry was reduced to its title to fit the size limit."
+    },
+    {
+      drop: () => {
+        includeSession = false;
+      },
+      notice:
+        "The session narrative was dropped, and the latest log entry reduced to its title, to fit the size limit."
+    },
+    {
+      drop: () => {
+        includeState = false;
+      },
+      notice:
+        "STATE and the session narrative were dropped to fit the size limit. Read PRD.md and PROJECT_LOG.md for them."
+    },
+    {
+      drop: () => {
+        includeDecided = false;
+      },
+      notice:
+        "Everything except the rules, the intent and the next step was dropped to fit the size limit."
+    },
+    {
+      drop: () => {
+        includeNext = false;
+      },
+      notice:
+        "Only the rules and the intent fit inside the size limit. Everything else was dropped."
+    }
+  ];
+
   let trimNotice: string | null = null;
+  let text = assemble();
 
-  const assemble = (parts: string[]): string => `${toAscii(parts.join("\n\n"))}\n`;
-
-  // Everything fits, with the log body included.
-  const full = assemble([protectedText, renderSection(buildStateSection(context, true)), nextText]);
-  if (bytesOf(full) <= MAX_BYTES) {
-    return { text: full, bytes: bytesOf(full), trimmed: false, trimNotice: null, missingSections };
+  for (const step of ladder) {
+    if (bytesOf(text) <= MAX_BYTES) {
+      break;
+    }
+    step.drop();
+    trimNotice = step.notice;
+    text = assemble();
   }
 
-  // Drop the log body first - it is prose the receiving agent can open itself.
-  const withoutLogBody = assemble([
-    protectedText,
-    renderSection(buildStateSection(context, false)),
-    nextText
-  ]);
-  if (bytesOf(withoutLogBody) <= MAX_BYTES) {
-    trimNotice = "The latest project log entry was reduced to its title to fit the size limit.";
+  if (bytesOf(text) <= MAX_BYTES) {
+    const final = trimNotice ? appendNotice(text, trimNotice) : text;
     return {
-      text: appendNotice(withoutLogBody, trimNotice),
-      bytes: bytesOf(appendNotice(withoutLogBody, trimNotice)),
-      trimmed: true,
-      trimNotice,
-      missingSections
-    };
-  }
-
-  // Then State entirely.
-  const withoutState = assemble([protectedText, nextText]);
-  if (bytesOf(withoutState) <= MAX_BYTES) {
-    trimNotice =
-      "The STATE section was dropped to fit the size limit. Read PRD.md and PROJECT_LOG.md for it.";
-    return {
-      text: appendNotice(withoutState, trimNotice),
-      bytes: bytesOf(appendNotice(withoutState, trimNotice)),
-      trimmed: true,
-      trimNotice,
-      missingSections
-    };
-  }
-
-  // Then Next.
-  const protectedOnly = assemble([protectedText]);
-  if (bytesOf(protectedOnly) <= MAX_BYTES) {
-    trimNotice =
-      "STATE and NEXT were dropped to fit the size limit. The rules and intent below are complete.";
-    return {
-      text: appendNotice(protectedOnly, trimNotice),
-      bytes: bytesOf(appendNotice(protectedOnly, trimNotice)),
-      trimmed: true,
+      text: final,
+      bytes: bytesOf(final),
+      trimmed: trimNotice !== null,
       trimNotice,
       missingSections
     };
