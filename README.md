@@ -22,6 +22,12 @@
 
 ---
 
+<p align="center">
+  <img src="docs/screenshots/mission-dashboard.png" alt="Starship's Mission Dashboard: stat tiles, a project table with activity heatmaps and note-health bars, and a per-project action panel" width="900">
+</p>
+
+<p align="center"><sub>Screenshots use a synthetic demo fixture — no real project data.</sub></p>
+
 ## The problem
 
 Agentic coding made *execution* cheap and *understanding* scarce. Writing code is no longer the bottleneck. Two other things are:
@@ -41,6 +47,20 @@ Existing tools answer *"what is the agent doing?"* — status. Starship answers 
 **Command.** Session briefings, a decision record, a file map, a narrative journey and an initial-plan view — each generated *against* the Intent Ledger, so they can flag drift from what you originally said you wanted, not merely report what happened.
 
 **Handoff.** At session end Starship writes a `CONTINUITY.md` — a thin, provider-agnostic note you paste into the next session, whether that's Claude Code, Codex or Antigravity. It exists for the case where the finishing agent hit a usage limit and could not write one itself.
+
+## Screens
+
+**Initial Plan** — the plan Claude proposed in its first reply to the cold prompt, read back verbatim from the oldest transcript. No model call: the data is already local, so this is a file scan rather than a summarization.
+
+<img src="docs/screenshots/initial-plan.png" alt="The Initial Plan overlay rendering a captured Phase 1 plan as markdown, including a 'Largest risk' section" width="880">
+
+**Intent Ledger** — four questions capturing why a project exists, what success means, which tradeoffs are accepted, and what it must never become. Captured at inception, or retrofitted later onto a project that predates it. Every briefing and annotation is generated against this.
+
+<img src="docs/screenshots/intent-ledger.png" alt="The Intent Ledger editor showing captured answers to the purpose, success and tradeoff questions, each with a Discuss action" width="880">
+
+**Full-width mode** — the detail panel collapses when the table is what matters. Selection survives the toggle.
+
+<img src="docs/screenshots/dashboard-wide.png" alt="The Mission Dashboard with the detail panel hidden, giving the project table full width" width="880">
 
 ## Design principles
 
