@@ -5,27 +5,43 @@
  * regenerated from after a UI change.
  *
  * Nothing here touches real data. USERPROFILE is redirected to a throwaway
- * home, so `os.homedir()` - and therefore `~/.claude/projects` - lands under
- * `acceptance-output/` instead. Every project, transcript and Intent Ledger
- * below is invented, so no real session, project name or path can appear in a
- * screenshot.
+ * home (see STARSHIP_DEMO_HOME below), so `os.homedir()` - and therefore
+ * `~/.claude/projects` - lands there instead. Every project, transcript and
+ * Intent Ledger below is invented, so no real session, project name or path
+ * can appear in a screenshot.
  *
  * No model call is possible: the projects are freshly created directories, and
  * every feature this drives (Intent Ledger, Initial Plan, the panel toggles)
  * reads local data only.
  */
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { _electron: electron } = require("playwright-core");
 const electronPath = require("electron");
 
 const repoRoot = path.resolve(__dirname, "..");
-// Under acceptance-output/, which .gitignore already covers - the fixture is
-// disposable and the screenshots are build products, not sources.
-const outputRoot = path.join(repoRoot, "acceptance-output");
-const demoHome = path.join(outputRoot, "demo-fixture-home");
+
+/*
+ * The fixture deliberately lives at a short, generic path rather than inside
+ * the repo. Every project row in the app shows its own directory, so the
+ * fixture's location ends up printed across each screenshot - and
+ * `D:\WEB PROJECTS\starship\acceptance-output\...` puts one machine's disk
+ * layout into a public README. `C:\starship\Projects\tide-atlas` reads as an
+ * example instead of as somebody's hard drive.
+ *
+ * Override with STARSHIP_DEMO_HOME if that path is unavailable or unwanted.
+ */
+const defaultDemoHome =
+  process.platform === "win32"
+    ? path.join("C:\\", "starship")
+    : path.join(os.homedir(), "starship-demo");
+const demoHome = process.env.STARSHIP_DEMO_HOME || defaultDemoHome;
 const demoRoot = path.join(demoHome, "Projects");
 const claudeProjects = path.join(demoHome, ".claude", "projects");
+
+// Build products, not sources - acceptance-output/ is already gitignored.
+const outputRoot = path.join(repoRoot, "acceptance-output");
 const shots = path.join(outputRoot, "screenshots");
 const dbPath = path.join(outputRoot, `demo-fixture-${Date.now()}.sqlite`);
 
@@ -361,6 +377,21 @@ const shot = async (page, name) => {
 
   fs.writeFileSync(path.join(shots, "page-text.txt"), await page.innerText("body"));
   await app.close();
+
+  /*
+   * Best effort only. Windows can hold the Electron profile open for a moment
+   * after close, and a failure here costs nothing - the next run removes the
+   * directory before rebuilding it anyway. Worth attempting because the
+   * default sits at the root of the system drive.
+   */
+  try {
+    fs.rmSync(demoHome, { recursive: true, force: true });
+    log(`removed fixture at ${demoHome}`);
+  } catch {
+    log(`fixture left at ${demoHome} (still locked); it is rebuilt on the next run`);
+  }
+
+  log(`screenshots in ${shots}`);
   log("done");
 })().catch((e) => {
   console.error("[fixture] FAILED:", e && e.stack ? e.stack : e);
