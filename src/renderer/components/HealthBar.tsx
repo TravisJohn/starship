@@ -55,22 +55,28 @@ export const HealthBar = ({
   const level = levelForScore(score);
   const filledSegments = Math.round((score / 100) * SEGMENT_COUNT);
 
+  /*
+   * Score and label share the second line rather than the score sitting beside
+   * the bar. Side by side they came to exactly the width of the Health column,
+   * so with the detail panel open - which narrows the table - the "%" was
+   * clipped and "100%" rendered as "100". Stacked, the bar row needs only the
+   * segments, and the column has room to spare either way.
+   */
   return (
     <div>
-      <div className="flex items-center gap-1.5">
-        <div className="flex gap-0.5">
-          {Array.from({ length: SEGMENT_COUNT }).map((_, index) => (
-            <span
-              key={index}
-              className={`h-2 w-2.5 rounded-sm ${
-                index < filledSegments ? level.barClass : "bg-zinc-800"
-              }`}
-            />
-          ))}
-        </div>
-        <span className="text-xs font-medium text-zinc-300">{score}%</span>
+      <div className="flex gap-0.5">
+        {Array.from({ length: SEGMENT_COUNT }).map((_, index) => (
+          <span
+            key={index}
+            className={`h-2 w-2.5 rounded-sm ${
+              index < filledSegments ? level.barClass : "bg-zinc-800"
+            }`}
+          />
+        ))}
       </div>
-      <p className={`mt-0.5 text-xs ${level.textClass}`}>{level.label}</p>
+      <p className={`mt-1 whitespace-nowrap text-xs ${level.textClass}`}>
+        <span className="font-medium">{score}%</span> {level.label}
+      </p>
     </div>
   );
 };
