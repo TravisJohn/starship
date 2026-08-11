@@ -50,6 +50,10 @@ Existing tools answer *"what is the agent doing?"* — status. Starship answers 
 
 ## Screens
 
+**Build Room** — a real Claude Code session in an embedded terminal, with the project's PRD phases across the top and a notes panel beside it. The terminal is genuine and always authoritative; Starship observes it rather than mediating it. Here it is mid-session, waiting on a decision.
+
+<img src="docs/screenshots/build-room.png" alt="The Build Room: a live Claude Code session in an embedded terminal, a roadmap strip of PRD phases, and a notes panel" width="880">
+
 **Initial Plan** — the plan Claude proposed in its first reply to the cold prompt, read back verbatim from the oldest transcript. No model call: the data is already local, so this is a file scan rather than a summarization.
 
 <img src="docs/screenshots/initial-plan.png" alt="The Initial Plan overlay rendering a captured Phase 1 plan as markdown, including a 'Largest risk' section" width="880">
