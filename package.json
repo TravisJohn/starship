@@ -18,6 +18,8 @@
     "intent:drift": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/intent-drift.cjs",
     "intent:backfill-dryrun": "cross-env ELECTRON_RUN_AS_NODE=1 electron scripts/intent-backfill-dryrun.cjs",
     "demo:fixture": "npm run build && node scripts/demo-fixture.cjs",
+    "verify:context-export": "npm run build && node scripts/verify-context-export.cjs",
+    "verify:copy-handoff": "npm run build && node scripts/verify-copy-handoff.cjs",
     "verify:shelf": "npm run build && node scripts/verify-shelf-persistence.cjs",
     "verify:terminal:powershell": "npm run build && node scripts/verify-terminal-powershell.cjs",
     "dist": "npm run build && electron-builder",
